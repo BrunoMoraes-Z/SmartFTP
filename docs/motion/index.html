@@ -1,0 +1,578 @@
+<title>SmartFTP in Motion</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single 16:9 "screen" (1280x720 design, scaled to fit) with transport controls,
+   then a short chapter list. Deliberately one dark look: it mirrors the app's Graphite Dark theme. */
+:root {
+  --page: #0d0d0c;
+  --bg: #121211; --surface: #181817; --surface2: #1f1f1d; --hover: #262624; --border: #2c2b28;
+  --ink: #eceae4; --muted: #a3a097; --faint: #6e6b63;
+  --signal: #f0a23b; --ok: #5bb974; --err: #e5484d; --folder: #d9a441;
+  --red: #e5484d; --blue: #3e9bf0; --green: #5bb974; --violet: #8e7cf0;
+  --sans: "Geist", "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--page); color: var(--ink); font-family: var(--sans); margin: 0; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 18px; }
+header.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+header.top h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+header.top p { margin: 0; color: var(--muted); font-size: 14px; flex: 1 1 280px; min-width: 0; }
+.mark { width: 30px; height: 30px; flex: none; }
+
+/* ---------- stage */
+.stage { position: relative; width: 100%; aspect-ratio: 16 / 9; max-width: 100%; border-radius: 14px; overflow: hidden; background: #0a0a09; border: 1px solid var(--border); }
+.film { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; overflow: hidden; background: radial-gradient(1200px 600px at 70% -10%, #1c1b18 0%, #0b0b0a 60%); font-size: 13px; }
+.layer { position: absolute; inset: 0; }
+
+/* ---------- transport */
+.transport { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn { font: 500 13px var(--sans); color: var(--ink); background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; height: 34px; padding: 0 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { background: var(--hover); }
+.btn:focus-visible, .chip:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.bar { flex: 1 1 220px; min-width: 0; height: 6px; border-radius: 3px; background: var(--hover); position: relative; cursor: pointer; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--signal); }
+.time { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 86px; text-align: right; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: 500 12px var(--sans); color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.chip[aria-current="true"] { color: var(--ink); border-color: var(--signal); background: rgba(240, 162, 59, 0.08); }
+.chip.ai { border-style: dashed; }
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.note { min-width: 0; }
+.note h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.note p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.note code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.note.ai h3 { color: var(--signal); }
+
+/* ---------- film: shared bits */
+.caption { position: absolute; left: 40px; bottom: 26px; display: flex; flex-direction: column; gap: 4px; max-width: 620px; z-index: 50; }
+.caption .eyebrow { font: 600 11px var(--sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--signal); }
+.caption .line { font: 600 26px/1.2 var(--sans); letter-spacing: -0.015em; color: var(--ink); text-wrap: balance; text-shadow: 0 2px 18px rgba(0,0,0,.7); }
+.cursor { position: absolute; left: 640px; top: 360px; width: 22px; height: 22px; z-index: 60; pointer-events: none; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
+.ripple { position: absolute; width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--ink); left: -7px; top: -7px; opacity: 0; }
+
+/* ---------- intro */
+#intro { display: grid; place-content: center; justify-items: center; gap: 18px; text-align: center; }
+#intro svg { width: 150px; height: 150px; }
+#intro h2 { margin: 0; font-size: 64px; font-weight: 700; letter-spacing: -0.04em; }
+#intro p { margin: 0; color: var(--muted); font-size: 20px; }
+#intro .protos { display: flex; gap: 10px; }
+#intro .protos span { font: 500 13px var(--mono); padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; color: var(--ink); }
+#intro .protos span.mcp { border-color: var(--signal); color: var(--signal); }
+
+/* ---------- mock app window */
+#app { position: absolute; left: 90px; top: 40px; width: 1100px; height: 600px; border-radius: 12px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 30px 80px rgba(0,0,0,.55); transform-origin: 100% 50%; display: flex; flex-direction: column; }
+.tb { height: 30px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 0 0 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 12px; }
+.tb b { font-weight: 600; }
+.tb .crumb { color: var(--faint); }
+.tb .crumb span { color: var(--muted); }
+.tb .caps { margin-left: auto; display: flex; height: 100%; }
+.tb .caps i { width: 40px; display: grid; place-items: center; color: var(--muted); font-style: normal; font-size: 11px; }
+.body { flex: 1; display: flex; min-height: 0; }
+.rail { width: 62px; flex: none; background: var(--surface); border-right: 1px solid var(--border); position: relative; }
+.rail > .tile, .rail > .folder { position: absolute; left: 12px; }
+.tile { width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center; position: relative; border: 1px solid; }
+.tile svg { width: 18px; height: 18px; }
+.tile .pill { position: absolute; left: -12px; top: 15px; width: 4px; height: 8px; border-radius: 0 3px 3px 0; background: var(--ink); opacity: 0; }
+.tile .dot { position: absolute; right: -3px; bottom: -3px; width: 11px; height: 11px; border-radius: 50%; background: var(--ok); border: 2px solid var(--surface); opacity: 0; }
+.tile .bot { position: absolute; left: -6px; top: -6px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; opacity: 0; }
+.tile .bot svg { width: 11px; height: 11px; }
+.t-red { background: rgba(229,72,77,.16); border-color: rgba(229,72,77,.38); color: var(--red); }
+.t-blue { background: rgba(62,155,240,.16); border-color: rgba(62,155,240,.38); color: var(--blue); }
+.t-green { background: rgba(91,185,116,.16); border-color: rgba(91,185,116,.38); color: var(--green); }
+.t-violet { background: rgba(142,124,240,.16); border-color: rgba(142,124,240,.38); color: var(--violet); }
+.t-add { background: var(--surface2); border-color: var(--border); color: var(--muted); border-radius: 10px; }
+.folder { width: 38px; height: 38px; border-radius: 9px; background: rgba(62,155,240,.2); border: 1px solid rgba(62,155,240,.45); display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 5px; position: absolute; left: 12px; opacity: 0; }
+.folder i { border-radius: 3px; display: block; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hdr { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+.hdr .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hdr .who b { font-size: 14px; font-weight: 600; }
+.hdr .who small { font: 11px var(--mono); color: var(--faint); }
+.hdr .tile { width: 30px; height: 30px; border-radius: 7px; }
+.hdr .tile svg { width: 15px; height: 15px; }
+.badge { font: 600 10px var(--sans); padding: 1px 6px; border-radius: 4px; }
+.panes { flex: 1; display: flex; min-height: 0; }
+.pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.pane + .pane { border-left: 1px solid var(--border); }
+.pbar { height: 38px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--border); font-size: 11px; }
+.pbar .path { flex: 1; height: 24px; border-radius: 5px; background: var(--surface); display: flex; align-items: center; padding: 0 8px; font: 11px var(--mono); color: var(--muted); }
+.pbar .path em { color: var(--ink); font-style: normal; }
+.pbar .label { font-weight: 600; color: var(--muted); }
+.rows { flex: 1; padding: 4px; }
+.row { height: 27px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 5px; border: 1px solid transparent; font-size: 12px; }
+.row svg { width: 14px; height: 14px; flex: none; }
+.row .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { width: 60px; text-align: right; font: 11px var(--mono); color: var(--muted); }
+.row .m { width: 52px; text-align: right; font: 11px var(--mono); color: var(--faint); }
+.row .b { font: 600 9px var(--sans); color: var(--signal); }
+.row.sel { background: rgba(236,234,228,.08); border-color: rgba(236,234,228,.16); }
+.row .arrow { width: 18px; text-align: center; color: var(--ink); opacity: 0; }
+.dropzone { position: absolute; inset: 38px 0 0 0; background: rgba(240,162,59,.07); border: 1.5px dashed rgba(240,162,59,.55); border-radius: 6px; opacity: 0; pointer-events: none; }
+.pfoot { height: 40px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-top: 1px solid var(--border); background: var(--surface); font-size: 11px; color: var(--faint); }
+.pfoot .send { margin-left: auto; background: var(--ink); color: var(--bg); font-weight: 600; border-radius: 6px; padding: 5px 10px; opacity: 0; }
+.drawer { height: 132px; flex: none; background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; }
+.dhead { height: 32px; display: flex; align-items: center; gap: 14px; padding: 0 14px; font-size: 11px; color: var(--faint); }
+.dhead b { color: var(--ink); font-weight: 600; }
+.dhead .spd { margin-left: auto; font-family: var(--mono); color: var(--signal); }
+.jobs { padding: 0 14px; display: flex; flex-direction: column; gap: 6px; }
+.job { display: grid; grid-template-columns: 16px auto 1fr auto 40px; align-items: center; gap: 10px; font-size: 11px; opacity: 0; }
+.job .r { font: 10px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job .p { font: 10px var(--mono); text-align: right; }
+.job .p::after { content: "%"; }
+.job .who { font-size: 10px; color: var(--signal); display: flex; align-items: center; gap: 4px; }
+.job .who svg { width: 11px; height: 11px; }
+.job .trk { grid-column: 2 / -1; height: 2px; background: var(--border); position: relative; }
+.job .trk i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--signal); }
+.ghost { position: absolute; z-index: 55; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); box-shadow: 0 10px 24px rgba(0,0,0,.5); font: 600 12px var(--sans); opacity: 0; white-space: nowrap; }
+.ghost small { color: var(--muted); font-weight: 400; }
+.toast { position: absolute; right: 16px; bottom: 148px; z-index: 40; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 7px; background: var(--surface2); border: 1px solid var(--border); box-shadow: 0 10px 24px rgba(0,0,0,.4); font-size: 12px; opacity: 0; }
+.toast svg { width: 14px; height: 14px; color: var(--signal); }
+.tip { position: absolute; left: 66px; z-index: 45; padding: 4px 8px; border-radius: 5px; background: var(--ink); color: var(--bg); font: 600 11px var(--sans); white-space: nowrap; opacity: 0; }
+
+/* ---------- agent panel */
+#agent { position: absolute; left: 36px; top: 34px; width: 392px; height: 552px; border-radius: 12px; background: #141413; border: 1px solid var(--border); box-shadow: 0 30px 80px rgba(0,0,0,.55); display: flex; flex-direction: column; opacity: 0; overflow: hidden; }
+.ahead { height: 46px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+.ahead .av { width: 24px; height: 24px; border-radius: 6px; background: rgba(240,162,59,.16); color: var(--signal); display: grid; place-items: center; }
+.ahead .av svg { width: 14px; height: 14px; }
+.ahead b { font-size: 13px; font-weight: 600; }
+.ahead small { margin-left: auto; font: 11px var(--mono); color: var(--ok); display: flex; align-items: center; gap: 6px; }
+.ahead small::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.chat { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.msg-user { align-self: flex-end; max-width: 88%; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px 10px 2px 10px; padding: 9px 12px; font-size: 13px; line-height: 1.45; opacity: 0; }
+.call { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; opacity: 0; }
+.call .fn { font: 500 12px var(--mono); color: var(--signal); display: flex; align-items: center; gap: 6px; }
+.call .fn::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--signal); }
+.call .args { font: 11px var(--mono); color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+.call .res { font: 11px var(--mono); color: var(--ok); opacity: 0; }
+.msg-ai { font-size: 13px; line-height: 1.5; color: var(--ink); opacity: 0; }
+.ainput { height: 44px; margin: 0 12px 12px; border: 1px solid var(--border); border-radius: 9px; display: flex; align-items: center; padding: 0 12px; color: var(--faint); font-size: 12px; }
+
+/* ---------- shared-sessions diagram */
+#flow { display: grid; place-content: center; gap: 34px; opacity: 0; }
+.nodes { display: flex; align-items: center; gap: 0; }
+.node { width: 250px; padding: 18px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.node.core { border-color: var(--signal); background: #1d1a14; }
+.node b { font-size: 17px; }
+.node span { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.link { width: 110px; height: 2px; background: repeating-linear-gradient(90deg, var(--signal) 0 8px, transparent 8px 14px); background-size: 28px 2px; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 900px; justify-self: center; }
+.tools span { font: 12px var(--mono); padding: 5px 10px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); color: var(--ink); opacity: 0; }
+
+/* ---------- control panel */
+#control { display: grid; place-items: center; opacity: 0; }
+.panel { width: 860px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); padding: 22px; display: grid; gap: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.panel h4 { margin: 0; font-size: 22px; display: flex; align-items: center; gap: 12px; }
+.panel h4 em { font: 600 12px var(--sans); font-style: normal; color: var(--ok); background: rgba(91,185,116,.12); border-radius: 999px; padding: 4px 10px; }
+.fieldrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fld { border: 1px solid var(--border); border-radius: 7px; padding: 9px 12px; font: 12px var(--mono); color: var(--ink); background: var(--surface); }
+.fld small { display: block; font: 11px var(--sans); color: var(--faint); margin-bottom: 3px; }
+.tgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tg { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-radius: 7px; background: var(--surface2); font: 12px var(--mono); }
+.sw { width: 30px; height: 17px; border-radius: 9px; background: var(--ink); position: relative; flex: none; }
+.sw i { position: absolute; top: 2px; left: 15px; width: 13px; height: 13px; border-radius: 50%; background: var(--bg); }
+.siterow { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); }
+.siterow div { flex: 1; display: grid; gap: 2px; }
+.siterow small { color: var(--faint); font-size: 12px; }
+
+/* ---------- themes + outro */
+#outro { display: grid; place-content: center; justify-items: center; gap: 16px; text-align: center; opacity: 0; }
+#outro svg { width: 96px; height: 96px; }
+#outro h2 { margin: 0; font-size: 48px; letter-spacing: -0.035em; }
+#outro .cmd { font: 13px var(--mono); color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+#outro .repo { font: 14px var(--mono); color: var(--signal); }
+
+@media (prefers-reduced-motion: reduce) { .link { animation: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <svg class="mark" viewBox="0 0 1024 1024" aria-hidden="true"><rect x="16" y="16" width="992" height="992" rx="200" fill="#1c1b18"/><path d="M372 744V292M240 424L372 292L504 424" stroke="#F0A23B" stroke-width="120" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M652 280V732M520 600L652 732L784 600" stroke="#ECEAE4" stroke-width="120" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    <h1>SmartFTP in motion</h1>
+    <p>A one-minute tour: the file manager you know, and an MCP server that lets AI agents work in the same sessions.</p>
+  </header>
+
+  <div class="stage" id="stage" aria-label="Animated tour of SmartFTP">
+    <div class="film" id="film">
+
+      <!-- INTRO -->
+      <div class="layer" id="intro">
+        <svg viewBox="0 0 1024 1024" aria-hidden="true">
+          <rect id="logoBase" x="48" y="48" width="928" height="928" rx="208" fill="#1c1b18" stroke="#3a3833" stroke-width="6"/>
+          <path id="logoUp" d="M392 724V300M264 428L392 300L520 428" stroke="#F0A23B" stroke-width="92" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <path id="logoDown" d="M632 300V724M504 596L632 724L760 596" stroke="#ECEAE4" stroke-width="92" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+        <h2>SmartFTP</h2>
+        <p>A fast FTP / SFTP desktop client, built in Rust.</p>
+        <div class="protos"><span>FTP</span><span>FTPS</span><span>SFTP</span><span class="mcp">+ MCP for AI agents</span></div>
+      </div>
+
+      <!-- APP -->
+      <div id="app" style="opacity:0">
+        <div class="tb">
+          <svg width="14" height="14" viewBox="0 0 1024 1024"><rect x="16" y="16" width="992" height="992" rx="200" fill="#2a2925"/><path d="M372 744V292M240 424L372 292L504 424" stroke="#F0A23B" stroke-width="130" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M652 280V732M520 600L652 732L784 600" stroke="#ECEAE4" stroke-width="130" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          <b>SmartFTP</b><span class="crumb" id="tbCrumb">/ <span id="tbSite">acme-prod</span></span>
+          <div class="caps"><i>—</i><i>☐</i><i>✕</i></div>
+        </div>
+        <div class="body">
+          <div class="rail" id="rail">
+            <div class="tile t-red" id="tProd" style="top:12px"><i class="pill"></i><i class="dot"></i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg></div>
+            <div class="tile t-blue" id="tMedia" style="top:60px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></div>
+            <div class="tile t-violet" id="tDocs" style="top:108px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg></div>
+            <div class="folder" id="tFolder" style="top:60px"><i style="background:rgba(62,155,240,.55)"></i><i style="background:rgba(142,124,240,.55)"></i><i style="background:rgba(255,255,255,.06)"></i><i style="background:rgba(255,255,255,.06)"></i></div>
+            <div class="tile t-green" id="tStg" style="opacity:0;top:108px"><i class="pill"></i><i class="dot"></i><span class="bot"><svg viewBox="0 0 24 24" fill="none" stroke="#F0A23B" stroke-width="2.4" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 14h.01M16 14h.01"/></svg></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 2v7.3L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.3V2M8.5 2h7M7 16h10"/></svg></div>
+            <div class="tile t-add" id="tAdd" style="top:156px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>
+            <div class="tip" id="tip" style="top:68px">Clients · 2 sites</div>
+          </div>
+          <div class="main">
+            <div class="hdr">
+              <div class="tile t-red" id="hTile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg></div>
+              <div class="who"><b id="hName">Not connected</b><small id="hAddr">pick a site on the left</small></div>
+              <span class="badge" id="hBadge" style="opacity:0;background:rgba(229,72,77,.16);color:#ff8589">production</span>
+            </div>
+            <div class="panes">
+              <div class="pane" id="localPane">
+                <div class="pbar"><span class="label">This computer</span><div class="path">~ / projects / acme / <em>&nbsp;dist</em></div></div>
+                <div class="rows" id="localRows"></div>
+                <div class="pfoot"><span id="selInfo">6 items</span><span class="send" id="sendBtn">Upload to /var/www/acme →</span></div>
+              </div>
+              <div class="pane" id="remotePane">
+                <div class="pbar"><span class="label" id="rLabel" style="color:#e5484d">acme-prod</span><div class="path" id="rPath">/ var / www / <em>&nbsp;acme</em></div></div>
+                <div class="rows" id="remoteRows"></div>
+                <div class="dropzone" id="drop"></div>
+                <div class="pfoot"><span id="rInfo">—</span></div>
+              </div>
+            </div>
+            <div class="drawer">
+              <div class="dhead"><b>Transfers</b><span id="dCount">Active 0</span><span>Done</span><span>Activity</span><span class="spd" id="spd">↑ 0 B/s</span></div>
+              <div class="jobs" id="jobs"></div>
+            </div>
+          </div>
+        </div>
+        <div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 14h.01M16 14h.01"/></svg><span>claude-code opened a session to <b>staging</b></span></div>
+      </div>
+
+      <!-- AGENT -->
+      <div id="agent">
+        <div class="ahead"><span class="av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 14h.01M16 14h.01"/></svg></span><b>AI agent</b><small>smartftp · MCP</small></div>
+        <div class="chat" id="chat">
+          <div class="msg-user" id="m0">Deploy the new build in <code>./dist</code> to staging, then check the deploy log.</div>
+          <div class="call" id="c1"><div class="fn">list_sites</div><div class="args">{}</div><div class="res">✓ 4 sites · staging allows agents</div></div>
+          <div class="call" id="c2"><div class="fn">connect</div><div class="args">{ "site": "staging" }</div><div class="res">✓ session s7 · cwd /var/www/staging</div></div>
+          <div class="call" id="c3"><div class="fn">upload</div><div class="args">{ "session": "s7", "local_paths": ["./dist"] }</div><div class="res">✓ 42 files · 8.1 MB · 0 failed</div></div>
+          <div class="call" id="c4"><div class="fn">read_file</div><div class="args">{ "session": "s7", "path": "logs/deploy.log" }</div><div class="res">✓ "build ok · 0 errors"</div></div>
+          <div class="msg-ai" id="m5">Done. 42 files are on staging and the deploy log ends with <b>build ok, 0 errors</b>.</div>
+        </div>
+      </div>
+
+      <!-- SHARED SESSIONS -->
+      <div class="layer" id="flow">
+        <div class="nodes">
+          <div class="node"><b>You</b><span>Click, drag and drop in the desktop window.</span></div>
+          <div class="link" id="link1"></div>
+          <div class="node core"><b>SmartFTP core</b><span>One set of sessions, one transfer queue, one activity log.</span></div>
+          <div class="link" id="link2"></div>
+          <div class="node"><b>AI agents</b><span>Claude Code or any MCP client, over HTTP or stdio.</span></div>
+        </div>
+        <div class="tools" id="tools">
+          <span>list_sites</span><span>list_sessions</span><span>connect</span><span>disconnect</span><span>list_dir</span><span>change_dir</span><span>make_dir</span><span>upload</span><span>download</span><span>read_file</span><span>write_file</span><span>rename</span><span>chmod</span><span>delete</span><span>list_transfers</span><span>cancel_transfer</span><span>list_local_dir</span>
+        </div>
+      </div>
+
+      <!-- CONTROL -->
+      <div class="layer" id="control">
+        <div class="panel">
+          <h4>MCP server <em>Running</em></h4>
+          <div class="fieldrow">
+            <div class="fld"><small>Endpoint (loopback only)</small>http://127.0.0.1:7331/mcp</div>
+            <div class="fld"><small>Bearer token</small>sftp-8c1f••••••••••••3f9a</div>
+          </div>
+          <div class="tgrid" id="tgrid">
+            <div class="tg">connect<span class="sw"><i></i></span></div>
+            <div class="tg">upload<span class="sw"><i></i></span></div>
+            <div class="tg">download<span class="sw"><i></i></span></div>
+            <div class="tg">read_file<span class="sw"><i></i></span></div>
+            <div class="tg">rename<span class="sw"><i></i></span></div>
+            <div class="tg" id="tgDelete">delete<span class="sw" id="swDelete"><i></i></span></div>
+          </div>
+          <div class="siterow"><div class="tile t-red" style="width:30px;height:30px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg></div><div><b>acme-prod</b><small>Allow AI agents (MCP) · passwords are never exposed</small></div><span class="sw" id="swSite"><i></i></span></div>
+        </div>
+      </div>
+
+      <!-- OUTRO -->
+      <div class="layer" id="outro">
+        <svg viewBox="0 0 1024 1024" aria-hidden="true"><rect x="48" y="48" width="928" height="928" rx="208" fill="#1c1b18" stroke="#3a3833" stroke-width="6"/><path d="M392 724V300M264 428L392 300L520 428" stroke="#F0A23B" stroke-width="92" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M632 300V724M504 596L632 724L760 596" stroke="#ECEAE4" stroke-width="92" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <h2>SmartFTP</h2>
+        <div class="cmd">claude mcp add --transport http smartftp http://127.0.0.1:7331/mcp</div>
+        <div class="repo">github.com/BrunoMoraes-Z/SmartFTP</div>
+      </div>
+
+      <div class="ghost" id="ghost">2 files <small>→ remote</small></div>
+      <svg class="cursor" id="cursor" viewBox="0 0 24 24"><path d="M4 2l15 9-6.5 1.5L10 19z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/><circle class="ripple" id="ripple" cx="0" cy="0" r="0"/></svg>
+      <div class="caption" id="caption"><span class="eyebrow" id="capEye">SmartFTP</span><span class="line" id="capLine">Your servers, your files, and your AI agents in one window.</span></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button class="btn" id="play" type="button" aria-label="Pause">❚❚ Pause</button>
+    <button class="btn" id="restart" type="button">↺ Restart</button>
+    <div class="bar" id="bar" role="slider" aria-label="Position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"><i id="barFill"></i></div>
+    <span class="time" id="time">0:00 / 0:00</span>
+  </div>
+  <div class="chips" id="chips"></div>
+
+  <div class="notes">
+    <div class="note"><h3>Connect</h3><p>Saved sites live in a rail of tiles. Click one to connect; folders group them, Discord style.</p></div>
+    <div class="note"><h3>Transfer</h3><p>Select files and press <code>→</code> / <code>←</code>, double-click, or drag between the panes. The queue shows progress and speed.</p></div>
+    <div class="note ai"><h3>Agents over MCP</h3><p>Agents call 17 tools: <code>connect</code>, <code>upload</code>, <code>read_file</code> and more. Their sessions and transfers appear live in your window.</p></div>
+    <div class="note ai"><h3>You stay in control</h3><p>Bearer token, loopback only, per-tool switches, per-site agent access. Passwords never reach the agent.</p></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const film = $("film"), stage = $("stage");
+
+  // ---------- scale the 1280x720 film to the stage
+  function fit() { film.style.transform = `scale(${stage.clientWidth / 1280})`; }
+  new ResizeObserver(fit).observe(stage); fit();
+
+  // ---------- data for the mock panes
+  const ICON = {
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="2" stroke-linecap="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="#a3a097" stroke-width="2" stroke-linecap="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+  };
+  const local = [["assets", "folder", "—", "Nov 20"], ["index.html", "file", "4.2 KB", "14:02", "▲ newer"], ["app.bundle.js", "file", "812 KB", "14:02", "▲ newer"], ["styles.css", "file", "38 KB", "13:58"], ["logo.svg", "file", "6.1 KB", "Nov 18"], ["README.md", "file", "2.3 KB", "Nov 12"]];
+  const remote = [["releases", "folder", "—", "Nov 23"], ["shared", "folder", "—", "Nov 02"], ["index.html", "file", "4.1 KB", "Nov 23"], ["app.bundle.js", "file", "798 KB", "Nov 23"], ["robots.txt", "file", "112 B", "Sep 14"]];
+  const row = ([n, ic, s, m, b], side, i) => `<div class="row" id="${side}${i}">${side === "r" ? '<span class="arrow">←</span>' : ""}${ICON[ic]}<span class="n">${n}</span>${b ? `<span class="b">${b}</span>` : ""}<span class="s">${s}</span><span class="m">${m}</span>${side === "l" ? '<span class="arrow">→</span>' : ""}</div>`;
+  $("localRows").innerHTML = local.map((r, i) => row(r, "l", i)).join("");
+  $("remoteRows").innerHTML = remote.map((r, i) => row(r, "r", i)).join("");
+  const job = (id, name, route, agent) => `<div class="job" id="${id}"><span style="color:var(--signal)">↑</span><span>${name}</span><span class="r">${route}</span><span class="who">${agent ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/></svg>claude-code' : ""}</span><span class="p" id="${id}p">0</span><div class="trk"><i id="${id}b"></i></div></div>`;
+  $("jobs").innerHTML = job("j1", "index.html", "dist/ → acme-prod:/var/www/acme/") + job("j2", "app.bundle.js", "dist/ → acme-prod:/var/www/acme/") + job("j3", "dist/ (42 files)", "./dist → staging:/var/www/staging/", true);
+  ["j3"].forEach((id) => gsap.set("#" + id, { display: "none" }));
+
+  // ---------- geometry, measured before any tween moves things (film coordinates)
+  const scale = stage.clientWidth / 1280;
+  const fr = film.getBoundingClientRect();
+  const center = (sel, dx = 0) => { const r = document.querySelector(sel).getBoundingClientRect(); return { x: (r.left - fr.left) / scale + r.width / scale / 2 + dx, y: (r.top - fr.top) / scale + r.height / scale / 2 }; };
+  const tiles = ["#tProd", "#tMedia", "#tDocs"].map((s) => center(s));
+  const tilePos = (i) => tiles[i];
+  const rowsL = [0, 1, 2, 3, 4, 5].map((i) => center("#l" + i, -120));
+  const localRowPos = (i) => rowsL[i];
+  const remotePaneCenter = center("#remoteRows");
+  const swDelete = center("#swDelete"), swSite = center("#swSite");
+
+  // ---------- timeline
+  const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+  const cap = (eye, line, at) => {
+    tl.to("#caption", { opacity: 0, y: 6, duration: 0.25 }, at)
+      .set("#capEye", { textContent: eye }, at + 0.25)
+      .set("#capLine", { textContent: line }, at + 0.25)
+      .to("#caption", { opacity: 1, y: 0, duration: 0.35 }, at + 0.3);
+  };
+  const moveTo = (p, at, d = 0.7) => tl.to("#cursor", { x: p.x - 640, y: p.y - 360, duration: d, ease: "power3.inOut" }, at);
+  const click = (at) => tl.fromTo("#ripple", { opacity: 0.9, scale: 0.4 }, { opacity: 0, scale: 1.6, duration: 0.45, transformOrigin: "50% 50%" }, at);
+
+  // 0 — intro
+  tl.addLabel("intro", 0);
+  tl.from("#logoBase", { scale: 0.6, opacity: 0, transformOrigin: "50% 50%", duration: 0.8, ease: "back.out(1.6)" }, 0.1)
+    .from("#logoUp", { strokeDasharray: 1400, strokeDashoffset: 1400, duration: 0.9 }, 0.4)
+    .from("#logoDown", { strokeDasharray: 1400, strokeDashoffset: -1400, duration: 0.9 }, 0.55)
+    .from("#intro h2, #intro p", { y: 16, opacity: 0, stagger: 0.12, duration: 0.6 }, 0.9)
+    .from("#intro .protos span", { y: 10, opacity: 0, stagger: 0.1, duration: 0.4 }, 1.3)
+    .set("#caption", { opacity: 0 }, 0)
+    .to("#intro", { opacity: 0, scale: 0.96, duration: 0.6 }, 4.2)
+    .set("#cursor", { opacity: 0 }, 0);
+
+  // 1 — connect
+  tl.addLabel("connect", 4.6);
+  tl.to("#app", { opacity: 1, y: 0, duration: 0.7 }, 4.6).from("#app", { y: 30, duration: 0.7 }, 4.6);
+  tl.set("#remoteRows .row", { opacity: 0 }, 0).set("#hBadge", { opacity: 0 }, 0).set("#tbCrumb", { opacity: 0 }, 0).set("#rLabel, #rPath", { opacity: 0 }, 0);
+  cap("Connect", "Saved sites live in the rail. One click connects.", 4.7);
+  tl.set("#cursor", { opacity: 1, x: 200, y: 200 }, 5.0);
+  moveTo(tilePos(0), 5.3);
+  click(6.05);
+  tl.to("#tProd .pill", { opacity: 1, height: 22, top: 8, duration: 0.3 }, 6.1)
+    .to("#tProd .dot", { opacity: 1, duration: 0.2 }, 6.5)
+    .set("#hName", { textContent: "acme-prod" }, 6.3)
+    .set("#hAddr", { textContent: "deploy@sftp.acme.dev:22 · SFTP" }, 6.3)
+    .to("#hBadge, #tbCrumb, #rLabel, #rPath", { opacity: 1, duration: 0.3 }, 6.3)
+    .to("#remoteRows .row", { opacity: 1, x: 0, stagger: 0.06, duration: 0.3 }, 6.5)
+    .set("#rInfo", { textContent: "5 items" }, 6.6);
+
+  // 2 — transfer
+  tl.addLabel("transfer", 8.4);
+  cap("Transfer", "Select files and drag them across, or press → / ←.", 8.4);
+  moveTo(localRowPos(1), 8.5);
+  click(9.25);
+  tl.set("#l1", { className: "row sel" }, 9.3);
+  moveTo(localRowPos(2), 9.55, 0.35);
+  click(9.95);
+  tl.set("#l2", { className: "row sel" }, 10.0)
+    .set("#selInfo", { textContent: "2 selected · 816 KB" }, 10.0)
+    .to("#sendBtn", { opacity: 1, duration: 0.3 }, 10.0)
+    .to("#l1 .arrow, #l2 .arrow", { opacity: 1, duration: 0.2 }, 10.0);
+  // drag
+  tl.set("#ghost", { left: localRowPos(2).x + 14, top: localRowPos(2).y + 8 }, 10.4)
+    .to("#ghost", { opacity: 1, rotation: -2, duration: 0.2 }, 10.5)
+    .to("#drop", { opacity: 1, duration: 0.25 }, 10.7);
+  moveTo(remotePaneCenter, 10.5, 1.0);
+  tl.to("#ghost", { left: remotePaneCenter.x + 14, top: remotePaneCenter.y + 8, duration: 1.0, ease: "power3.inOut" }, 10.5)
+    .to("#ghost, #drop", { opacity: 0, duration: 0.25 }, 11.6)
+    .to(".job:not(#j3)", { opacity: 1, stagger: 0.1, duration: 0.25 }, 11.7)
+    .set("#dCount", { textContent: "Active 2" }, 11.7)
+    .set("#spd", { textContent: "↑ 3.4 MB/s" }, 11.8)
+    .to("#j1b", { width: "100%", duration: 0.9, ease: "none" }, 11.8)
+    .to("#j1p", { textContent: 100, duration: 0.9, snap: { textContent: 1 }, ease: "none" }, 11.8)
+    .to("#j2b", { width: "100%", duration: 2.0, ease: "none" }, 11.8)
+    .to("#j2p", { textContent: 100, duration: 2.0, snap: { textContent: 1 }, ease: "none" }, 11.8)
+    .set("#l1 .b, #l2 .b", { opacity: 0 }, 13.9)
+    .set("#dCount", { textContent: "Active 0" }, 13.9)
+    .set("#spd", { textContent: "↑ 0 B/s" }, 13.9)
+    .set("#l1, #l2", { className: "row" }, 13.9)
+    .to("#sendBtn, #l1 .arrow, #l2 .arrow", { opacity: 0, duration: 0.2 }, 13.9)
+    .set("#selInfo", { textContent: "6 items" }, 13.9);
+
+  // 3 — organize
+  tl.addLabel("organize", 14.4);
+  cap("Organize", "Drop a site onto another to make a folder.", 14.4);
+  moveTo(tilePos(2), 14.5, 0.6);
+  tl.to("#tDocs", { x: 0, y: -48, scale: 0.9, duration: 0.7, ease: "power3.inOut" }, 15.2);
+  moveTo(tilePos(1), 15.2, 0.7);
+  tl.to("#tMedia, #tDocs", { opacity: 0, scale: 0.6, duration: 0.25 }, 15.95)
+    .to("#tFolder", { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2)" }, 16.0)
+    .to("#tAdd", { y: -48, duration: 0.35 }, 16.0)
+    .to("#tip", { opacity: 1, duration: 0.2 }, 16.4)
+    .to("#tip", { opacity: 0, duration: 0.2 }, 17.6)
+    .to("#cursor", { opacity: 0, duration: 0.2 }, 17.6);
+
+  // 4 — MCP agent (the main act)
+  tl.addLabel("agent", 18.0);
+  cap("AI agents over MCP", "Ask an agent. It works in SmartFTP, and you watch it happen.", 18.0);
+  tl.to("#app", { x: 50, scale: 0.72, duration: 0.9, ease: "power3.inOut" }, 18.1)
+    .to("#agent", { opacity: 1, x: 0, duration: 0.7 }, 18.4).from("#agent", { x: -40, duration: 0.7 }, 18.4)
+    .to("#m0", { opacity: 1, y: 0, duration: 0.4 }, 19.1).from("#m0", { y: 8, duration: 0.4 }, 19.1);
+  const call = (n, at) => tl.to("#c" + n, { opacity: 1, duration: 0.3 }, at).from("#c" + n, { y: 8, duration: 0.3 }, at).to(`#c${n} .res`, { opacity: 1, duration: 0.25 }, at + 0.9);
+  call(1, 20.2);
+  call(2, 21.6);
+  // agent's session shows up in the window
+  tl.fromTo("#tStg", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }, 22.4)
+    .to("#tAdd", { y: 0, duration: 0.3 }, 22.4)
+    .to("#tStg .bot, #tStg .dot", { opacity: 1, duration: 0.2 }, 22.6)
+    .to("#tProd .pill", { height: 8, top: 15, duration: 0.25 }, 22.6)
+    .to("#tStg .pill", { opacity: 1, height: 22, top: 8, duration: 0.3 }, 22.6)
+    .to("#toast", { opacity: 1, y: 0, duration: 0.3 }, 22.6).from("#toast", { y: 10, duration: 0.3 }, 22.6)
+    .set("#hTile", { className: "tile t-green" }, 22.7)
+    .set("#hName", { textContent: "staging" }, 22.7)
+    .set("#hAddr", { textContent: "deploy@stg.acme.dev:22 · SFTP · opened by claude-code" }, 22.7)
+    .set("#hBadge", { opacity: 0 }, 22.7)
+    .set("#tbSite", { textContent: "staging" }, 22.7)
+    .set("#rLabel", { textContent: "staging", color: "#5bb974" }, 22.7)
+    .set("#rPath", { innerHTML: "/ var / www / <em>&nbsp;staging</em>" }, 22.7)
+    .to("#toast", { opacity: 0, duration: 0.3 }, 25.0);
+  call(3, 23.5);
+  tl.set("#j3", { display: "grid" }, 23.7)
+    .set(".job:not(#j3)", { display: "none" }, 23.7)
+    .to("#j3", { opacity: 1, duration: 0.25 }, 23.7)
+    .set("#dCount", { textContent: "Active 1" }, 23.7)
+    .set("#spd", { textContent: "↑ 6.2 MB/s" }, 23.8)
+    .to("#j3b", { width: "100%", duration: 1.6, ease: "none" }, 23.8)
+    .to("#j3p", { textContent: 100, duration: 1.6, snap: { textContent: 1 }, ease: "none" }, 23.8)
+    .set("#dCount", { textContent: "Active 0" }, 25.4)
+    .set("#spd", { textContent: "↑ 0 B/s" }, 25.4);
+  call(4, 25.6);
+  tl.to("#m5", { opacity: 1, duration: 0.5 }, 26.9);
+
+  // 5 — shared sessions + tool list
+  tl.addLabel("shared", 29.2);
+  cap("One set of sessions", "Agents use the same sessions, queue and log as you.", 29.2);
+  tl.to("#agent, #app", { opacity: 0, duration: 0.5 }, 29.2)
+    .to("#flow", { opacity: 1, duration: 0.5 }, 29.6)
+    .from("#flow .node", { y: 14, opacity: 0, stagger: 0.15, duration: 0.45 }, 29.7)
+    .from("#link1, #link2", { scaleX: 0, transformOrigin: "0 50%", duration: 0.4, stagger: 0.15 }, 30.1)
+    .to("#link1, #link2", { backgroundPositionX: 56, duration: 3, ease: "none", repeat: 1 }, 30.4)
+    .to("#tools span", { opacity: 1, y: 0, stagger: 0.07, duration: 0.25 }, 30.9)
+    .to("#flow", { opacity: 0, duration: 0.5 }, 35.6);
+
+  // 6 — control
+  tl.addLabel("control", 36.0);
+  cap("You stay in control", "Token, loopback only, switches per tool and per site.", 36.0);
+  tl.to("#control", { opacity: 1, duration: 0.5 }, 36.0)
+    .from(".panel", { y: 20, duration: 0.5 }, 36.0)
+    .set("#cursor", { opacity: 1, x: 300, y: 300 }, 36.4);
+  moveTo(swDelete, 36.6, 0.8);
+  click(37.5);
+  tl.to("#swDelete", { backgroundColor: "#2c2b28", duration: 0.2 }, 37.55)
+    .to("#swDelete i", { left: 2, backgroundColor: "#6e6b63", duration: 0.2 }, 37.55);
+  moveTo(swSite, 38.1, 0.6);
+  click(38.8);
+  tl.to("#swSite", { backgroundColor: "#2c2b28", duration: 0.2 }, 38.85)
+    .to("#swSite i", { left: 2, backgroundColor: "#6e6b63", duration: 0.2 }, 38.85)
+    .to("#control, #cursor", { opacity: 0, duration: 0.5 }, 41.0);
+
+  // 7 — themes + outro
+  tl.addLabel("themes", 41.4);
+  cap("Make it yours", "Six built-in themes, plus your own in a small TOML file.", 41.4);
+  tl.set("#app", { x: 0, scale: 0.86 }, 41.4).set("#app", { left: 90, top: 22 }, 41.4)
+    .to("#app", { opacity: 1, duration: 0.5 }, 41.5);
+  const theme = (vars, at) => tl.to("#app", { ...vars, duration: 0.6 }, at);
+  theme({ "--bg": "#ffffff", "--surface": "#f6f8fa", "--surface2": "#eff2f5", "--hover": "#eaeef2", "--border": "#d0d7de", "--ink": "#1f2328", "--muted": "#59636e", "--faint": "#818b98", "--signal": "#0969da" }, 42.6);
+  theme({ "--bg": "#282a36", "--surface": "#21222c", "--surface2": "#343746", "--hover": "#3c3f52", "--border": "#44475a", "--ink": "#f8f8f2", "--muted": "#c3c5d9", "--faint": "#6272a4", "--signal": "#ffb86c" }, 44.0);
+  theme({ "--bg": "#121211", "--surface": "#181817", "--surface2": "#1f1f1d", "--hover": "#262624", "--border": "#2c2b28", "--ink": "#eceae4", "--muted": "#a3a097", "--faint": "#6e6b63", "--signal": "#f0a23b" }, 45.4);
+  tl.addLabel("outro", 46.6);
+  cap("SmartFTP", "Written in Rust. Point your agent at it.", 46.6);
+  tl.to("#app", { opacity: 0, duration: 0.5 }, 46.6)
+    .to("#outro", { opacity: 1, duration: 0.6 }, 47.0)
+    .from("#outro > *", { y: 12, opacity: 0, stagger: 0.12, duration: 0.5 }, 47.0)
+    .to({}, { duration: 3 }, 49);
+
+  // ---------- transport UI
+  const chapters = [["intro", "Intro"], ["connect", "Connect"], ["transfer", "Transfer"], ["organize", "Organize"], ["agent", "AI agent (MCP)", true], ["shared", "Shared sessions", true], ["control", "Control", true], ["themes", "Themes"]];
+  const chips = $("chips");
+  chapters.forEach(([label, text, ai]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip" + (ai ? " ai" : ""); b.textContent = text; b.dataset.label = label;
+    b.addEventListener("click", () => { tl.seek(label).play(); setPlaying(true); });
+    chips.appendChild(b);
+  });
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  const total = tl.duration();
+  const playBtn = $("play");
+  function setPlaying(p) { playBtn.textContent = p ? "❚❚ Pause" : "▶ Play"; playBtn.setAttribute("aria-label", p ? "Pause" : "Play"); }
+  tl.eventCallback("onUpdate", () => {
+    const t = tl.time();
+    $("barFill").style.width = (t / total * 100) + "%";
+    $("bar").setAttribute("aria-valuenow", Math.round(t / total * 100));
+    $("time").textContent = `${fmt(t)} / ${fmt(total)}`;
+    let current = chapters[0][0];
+    for (const [l] of chapters) if (tl.labels[l] <= t + 0.01) current = l;
+    chips.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-current", String(c.dataset.label === current)));
+  });
+  tl.eventCallback("onComplete", () => setPlaying(false));
+  playBtn.addEventListener("click", () => {
+    if (tl.progress() >= 1) { tl.restart(); setPlaying(true); return; }
+    if (tl.paused()) { tl.play(); setPlaying(true); } else { tl.pause(); setPlaying(false); }
+  });
+  $("restart").addEventListener("click", () => { tl.restart(); setPlaying(true); });
+  const seekFromEvent = (e) => { const r = $("bar").getBoundingClientRect(); tl.progress(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))); };
+  $("bar").addEventListener("click", seekFromEvent);
+  $("bar").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") tl.time(Math.min(total, tl.time() + 3));
+    if (e.key === "ArrowLeft") tl.time(Math.max(0, tl.time() - 3));
+  });
+
+  // Reduced motion: show the agent scene as a still frame instead of autoplaying.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    tl.seek(27.6).pause(); setPlaying(false);
+  } else {
+    // start from a fully drawn title card, then play
+    tl.seek(2.2).pause();
+    setTimeout(() => { tl.restart(); setPlaying(true); }, 600);
+  }
+})();
+</script>

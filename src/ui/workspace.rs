@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use gpui::{
-    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Pixels, Point, SharedString,
-    Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
+    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, MouseButton, MouseDownEvent, Pixels, Point,
+    SharedString, Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
 };
 
 use super::components::*;
@@ -20,29 +20,26 @@ use crate::core::remote::{list_local, sort_entries};
 use crate::core::{Core, Direction, JobState, Session};
 use crate::i18n::{tr, trf};
 
-actions!(workspace, [DeleteSelected, OpenSelected, GoUp, Refresh, RenameSelected, SelectAllRows, Dismiss, NewFolder, EditPath, EditFile]);
-
-pub fn bind_keys(cx: &mut App) {
-    let ctx = Some("FilePane");
-    cx.bind_keys([
-        KeyBinding::new("delete", DeleteSelected, ctx),
-        KeyBinding::new("enter", OpenSelected, ctx),
-        KeyBinding::new("backspace", GoUp, ctx),
-        KeyBinding::new("f5", Refresh, None),
-        KeyBinding::new("f2", RenameSelected, ctx),
-        KeyBinding::new("f7", NewFolder, ctx),
-        KeyBinding::new("f4", EditFile, ctx),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-a", SelectAllRows, ctx),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-a", SelectAllRows, ctx),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-l", EditPath, ctx),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-l", EditPath, ctx),
-        KeyBinding::new("escape", Dismiss, Some("Workspace")),
-    ]);
-}
+actions!(
+    workspace,
+    [
+        DeleteSelected,
+        OpenSelected,
+        GoUp,
+        GoBack,
+        GoForward,
+        Refresh,
+        RenameSelected,
+        SelectAllRows,
+        Dismiss,
+        NewFolder,
+        EditPath,
+        EditFile,
+        AddToQueueSel,
+        ProcessQueue,
+        ToggleTransfers
+    ]
+);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Side {
@@ -76,6 +73,9 @@ pub struct Pane {
     pub sort: SortBy,
     pub sort_desc: bool,
     pub show_hidden: bool,
+    /// Folders visited before / after the current one (Back / Forward).
+    pub back: Vec<String>,
+    pub forward: Vec<String>,
 }
 
 impl Pane {
@@ -90,6 +90,8 @@ impl Pane {
             sort: SortBy::Name,
             sort_desc: false,
             show_hidden: true,
+            back: vec![],
+            forward: vec![],
         }
     }
 
@@ -478,6 +480,36 @@ impl Workspace {
     }
 
     pub fn navigate(&mut self, side: Side, path: String, cx: &mut Context<Self>) {
+        self.navigate_with(side, path, true, cx);
+    }
+
+    /// Back / Forward through the folders visited in a pane.
+    pub fn history(&mut self, side: Side, forward: bool, cx: &mut Context<Self>) {
+        let Some(pane) = self.pane_mut(side) else { return };
+        let target = if forward { pane.forward.pop() } else { pane.back.pop() };
+        let Some(target) = target else { return };
+        let current = pane.path.clone();
+        if forward {
+            pane.back.push(current);
+        } else {
+            pane.forward.push(current);
+        }
+        self.navigate_with(side, target, false, cx);
+    }
+
+    fn navigate_with(&mut self, side: Side, path: String, record: bool, cx: &mut Context<Self>) {
+        if record
+            && let Some(pane) = self.pane_mut(side)
+            && pane.path != path
+            && (side == Side::Remote || std::path::Path::new(&path).is_dir())
+        {
+            let previous = pane.path.clone();
+            pane.back.push(previous);
+            if pane.back.len() > 100 {
+                pane.back.remove(0);
+            }
+            pane.forward.clear();
+        }
         match side {
             Side::Local => {
                 if !std::path::Path::new(&path).is_dir() {
@@ -988,6 +1020,68 @@ impl Workspace {
         cx.notify();
     }
 
+    fn act_back(&mut self, _: &GoBack, _: &mut Window, cx: &mut Context<Self>) {
+        self.history(self.last_side, false, cx);
+    }
+
+    fn act_forward(&mut self, _: &GoForward, _: &mut Window, cx: &mut Context<Self>) {
+        self.history(self.last_side, true, cx);
+    }
+
+    fn act_add_queue(&mut self, _: &AddToQueueSel, _: &mut Window, cx: &mut Context<Self>) {
+        let side = self.last_side;
+        let paths: Vec<String> = self.targets(side, None).into_iter().map(|e| e.path).collect();
+        self.enqueue(side, paths, cx);
+    }
+
+    fn act_process_queue(&mut self, _: &ProcessQueue, _: &mut Window, cx: &mut Context<Self>) {
+        if self.core.process_queue(None) > 0 {
+            self.drawer_open = true;
+            self.drawer_tab = DrawerTab::Active;
+        }
+        cx.notify();
+    }
+
+    fn act_toggle_transfers(&mut self, _: &ToggleTransfers, _: &mut Window, cx: &mut Context<Self>) {
+        self.drawer_open = !self.drawer_open;
+        cx.notify();
+    }
+
+    /// Run a configurable command (used by mouse buttons; keys go through actions).
+    pub fn run_cmd(&mut self, cmd: super::shortcuts::Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        use super::shortcuts::Cmd;
+        match cmd {
+            Cmd::Back => self.act_back(&GoBack, window, cx),
+            Cmd::Forward => self.act_forward(&GoForward, window, cx),
+            Cmd::Up => self.act_up(&GoUp, window, cx),
+            Cmd::Refresh => self.act_refresh(&Refresh, window, cx),
+            Cmd::Open => self.act_open(&OpenSelected, window, cx),
+            Cmd::Delete => self.act_delete(&DeleteSelected, window, cx),
+            Cmd::Rename => self.act_rename(&RenameSelected, window, cx),
+            Cmd::NewFolder => self.act_new_folder(&NewFolder, window, cx),
+            Cmd::Edit => self.act_edit_file(&EditFile, window, cx),
+            Cmd::EditPath => self.act_edit_path(&EditPath, window, cx),
+            Cmd::SelectAll => self.act_select_all(&SelectAllRows, window, cx),
+            Cmd::AddToQueue => self.act_add_queue(&AddToQueueSel, window, cx),
+            Cmd::ProcessQueue => self.act_process_queue(&ProcessQueue, window, cx),
+            Cmd::ToggleTransfers => self.act_toggle_transfers(&ToggleTransfers, window, cx),
+        }
+    }
+
+    /// Extra mouse buttons (side Back / Forward, middle) mapped in Settings → Shortcuts.
+    pub fn mouse_command(&mut self, button: MouseButton, side: Option<Side>, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if matches!(button, MouseButton::Left | MouseButton::Right) || self.settings.recording.is_some() {
+            return false;
+        }
+        let cmd = super::shortcuts::command_for_mouse(&self.core.config.lock(), button);
+        let Some(cmd) = cmd else { return false };
+        if let Some(side) = side {
+            self.last_side = side;
+        }
+        self.run_cmd(cmd, window, cx);
+        true
+    }
+
     fn act_edit_file(&mut self, _: &EditFile, _: &mut Window, cx: &mut Context<Self>) {
         let side = self.last_side;
         if let [one] = self.targets(side, None).as_slice()
@@ -1389,6 +1483,16 @@ impl Render for Workspace {
                     .on_action(cx.listener(Self::act_dismiss))
                     .on_action(cx.listener(Self::act_edit_path))
                     .on_action(cx.listener(Self::act_edit_file))
+                    .on_action(cx.listener(Self::act_back))
+                    .on_action(cx.listener(Self::act_forward))
+                    .on_action(cx.listener(Self::act_add_queue))
+                    .on_action(cx.listener(Self::act_process_queue))
+                    .on_action(cx.listener(Self::act_toggle_transfers))
+                    .on_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                        if this.mouse_command(ev.button, None, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
                     .flex()
                     .flex_1()
                     .min_h_0()

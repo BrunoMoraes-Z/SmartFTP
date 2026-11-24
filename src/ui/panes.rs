@@ -591,6 +591,11 @@ impl Workspace {
             .flex_col()
             .size_full()
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, _| this.last_side = side))
+            .on_any_mouse_down(cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                if this.mouse_command(ev.button, Some(side), window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, ev: &MouseDownEvent, _, cx| {

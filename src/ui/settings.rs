@@ -12,6 +12,7 @@ use crate::i18n::{tr, trf};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
     General,
+    Shortcuts,
     Connection,
     Transfers,
     Appearance,
@@ -22,6 +23,9 @@ pub struct SettingsState {
     pub tab: SettingsTab,
     pub show_token: bool,
     pub editor_input: gpui::Entity<super::input::TextInput>,
+    /// Shortcut being recorded: (command, true = mouse button / false = keyboard).
+    pub recording: Option<(super::shortcuts::Cmd, bool)>,
+    pub rec_focus: gpui::FocusHandle,
     _subs: Vec<gpui::Subscription>,
 }
 
@@ -35,7 +39,14 @@ impl SettingsState {
                 this.core.update_config(move |c| c.interface.editor = value);
             }
         });
-        SettingsState { tab: SettingsTab::General, show_token: false, editor_input, _subs: vec![sub] }
+        SettingsState {
+            tab: SettingsTab::General,
+            show_token: false,
+            editor_input,
+            recording: None,
+            rec_focus: cx.focus_handle(),
+            _subs: vec![sub],
+        }
     }
 }
 
@@ -121,6 +132,7 @@ impl Workspace {
         };
         let content = match tab {
             SettingsTab::General => self.render_general(cx).into_any_element(),
+            SettingsTab::Shortcuts => self.render_shortcuts(cx).into_any_element(),
             SettingsTab::Connection => self.render_connection(cx).into_any_element(),
             SettingsTab::Transfers => self.render_transfers(cx).into_any_element(),
             SettingsTab::Appearance => self.render_appearance(cx).into_any_element(),
@@ -160,6 +172,7 @@ impl Workspace {
                     .child(nav_item(tr("General"), "sliders-horizontal", SettingsTab::General, cx))
                     .child(nav_item(tr("Connection"), "plug", SettingsTab::Connection, cx))
                     .child(nav_item(tr("Transfers"), "arrow-up-down", SettingsTab::Transfers, cx))
+                    .child(nav_item(tr("Shortcuts"), "keyboard", SettingsTab::Shortcuts, cx))
                     .child(nav_item(tr("Appearance"), "palette", SettingsTab::Appearance, cx))
                     .child(nav_item(tr("MCP & Agents"), "bot", SettingsTab::Mcp, cx)),
             )

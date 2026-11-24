@@ -21,6 +21,7 @@ A desktop FTP / FTPS / SFTP client written in Rust with [GPUI](https://www.gpui.
 - **View / Edit.** Open a remote file in VS Code or any editor; when you save, SmartFTP offers to upload it and replace the original.
 - **AI agents over MCP.** 18 tools to connect, browse, upload, download, read and write files. What an agent does shows up live in the window.
 - **A connection rail like Discord's.** Sites are tiles with your own icon and color; drop one onto another to make a folder.
+- **Mouse side buttons** go back and forward through the folders you visited; every action can get a key or mouse button of your choice.
 - **FileZilla-style settings**: timeouts, retries, reconnect, FTP modes, speed limits, simultaneous transfers and what to do when a file exists.
 - **Themes and languages.** Six built-in themes plus your own TOML files; English, Brazilian Portuguese and Spanish.
 - **Updates itself** from GitHub Releases, verified with SHA-256, always asking first.
@@ -96,18 +97,23 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
   - the **Editing** tab lists the files you have open, with **Upload now** and **Stop editing**;
   - pick the editor in **Settings → General → File editor**: the system default, a detected editor (VS Code, Cursor, Notepad++, Sublime Text, Notepad) or any program. `{file}` in the command is replaced by the path.
 
-| Key | Action |
-|---|---|
-| `Enter` | Open folder / transfer selection |
-| `Backspace` | Parent folder |
-| `Ctrl+L` | Type a path |
-| `F5` | Refresh |
-| `F2` | Rename |
-| `F4` | View / Edit |
-| `F7` | New folder |
-| `Delete` | Delete |
-| `Ctrl+A` | Select all |
-| `Esc` | Close dialog or menu |
+Default shortcuts (change them in **Settings → Shortcuts**, where each action can also get a mouse button):
+
+| Action | Keyboard | Mouse |
+|---|---|---|
+| Back / Forward (folder history) | `Alt+←` / `Alt+→` | side buttons |
+| Parent folder | `Backspace` | |
+| Open folder / transfer selection | `Enter` | |
+| Type a path | `Ctrl+L` | |
+| Refresh | `F5` | |
+| Rename | `F2` | |
+| View / Edit | `F4` | |
+| New folder | `F7` | |
+| Delete | `Delete` | |
+| Select all | `Ctrl+A` | |
+| Process queue | `Ctrl+P` | |
+| Show / hide transfers | `Ctrl+J` | |
+| Close dialog or menu | `Esc` | |
 
 ### Settings
 
@@ -133,6 +139,7 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
   - timestamp preservation;
   - what to do when a file already exists: overwrite, overwrite if newer, overwrite if different, rename or skip.
 - **Appearance**: themes and System / Light / Dark mode.
+- **Shortcuts**: a keyboard shortcut and a mouse button (side Back / Forward or middle) for every action. Click a cell and press the key or button; a shortcut used elsewhere moves to the new action.
 - **MCP & Agents**: see above.
 
 ### Themes

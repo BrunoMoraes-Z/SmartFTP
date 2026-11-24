@@ -162,6 +162,17 @@ impl Default for InterfaceSettings {
     }
 }
 
+/// User-changed shortcuts, by command id. A missing command uses its default; an empty string
+/// means "no shortcut".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Shortcuts {
+    /// command id -> keystrokes, e.g. "ctrl-l"
+    pub keys: std::collections::BTreeMap<String, String>,
+    /// command id -> mouse button: "back", "forward" or "middle"
+    pub mouse: std::collections::BTreeMap<String, String>,
+}
+
 /// One entry of the connection rail: a site, or a folder of sites.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -212,6 +223,8 @@ pub struct Config {
     /// Order of sites and folders in the rail.
     #[serde(default)]
     pub rail: Vec<RailNode>,
+    #[serde(default)]
+    pub shortcuts: Shortcuts,
 }
 
 fn default_dark() -> String {
@@ -235,6 +248,7 @@ impl Default for Config {
             transfers: TransferSettings::default(),
             interface: InterfaceSettings::default(),
             rail: vec![],
+            shortcuts: Shortcuts::default(),
         }
     }
 }

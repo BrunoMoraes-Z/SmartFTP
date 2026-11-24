@@ -1,8 +1,9 @@
 name: Release
 
 # Pushing a tag like v0.2.0 (see `just release` / `just publish`) builds the app and
-# publishes a GitHub Release. The in-app updater reads the latest release and installs
-# `smartftp-windows-x86_64.exe` after checking it against the published `.sha256`.
+# publishes a GitHub Release with the installer, a portable zip and the bare executable.
+# The in-app updater reads the latest release and installs `smartftp-windows-x86_64.exe`
+# after checking it against the published `.sha256`.
 
 on:
   push:
@@ -60,6 +61,17 @@ jobs:
           if (Test-Path LICENSE) { Copy-Item LICENSE pkg/ }
           Copy-Item themes pkg/themes -Recurse
           Compress-Archive -Path pkg/* -DestinationPath "out/SmartFTP-$v-windows-x86_64.zip"
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Could not install Inno Setup" }
+          }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" "/DSourceExe=..\target\release\smartftp.exe" "/DOutputDir=..\out" installer\smartftp.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem out
 
       - name: Publish release
@@ -73,3 +85,4 @@ jobs:
             out/smartftp-windows-x86_64.exe
             out/smartftp-windows-x86_64.exe.sha256
             out/SmartFTP-${{ steps.version.outputs.version }}-windows-x86_64.zip
+            out/SmartFTP-${{ steps.version.outputs.version }}-setup.exe

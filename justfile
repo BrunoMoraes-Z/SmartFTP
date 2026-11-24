@@ -34,6 +34,16 @@ package: build
     Compress-Archive -Path dist/* -DestinationPath $zip -Force; \
     Write-Host "packaged $zip"
 
+# Build the Windows installer (Inno Setup 6) into dist/SmartFTP-<version>-setup.exe
+installer: build
+    $ErrorActionPreference = 'Stop'; \
+    $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version; \
+    $iscc = @((Get-Command iscc -ErrorAction SilentlyContinue).Source, "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1; \
+    if (-not $iscc) { throw 'Inno Setup 6 not found. Install it with: winget install JRSoftware.InnoSetup' }; \
+    & $iscc "/DAppVersion=$version" '/DSourceExe=..\target\release\smartftp.exe' '/DOutputDir=..\dist' installer/smartftp.iss; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    Write-Host "installer: dist/SmartFTP-$version-setup.exe"
+
 # Run the app (debug build)
 run:
     cargo run

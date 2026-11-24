@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, SharedString, Window, anchored,
-    deferred, div, hsla, prelude::*, px,
+    AnyElement, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Window, anchored, deferred, div, hsla,
+    prelude::*, px,
 };
 
 use super::components::*;
@@ -662,10 +662,10 @@ impl Workspace {
         )
     }
 
-    fn confirm_delete_site(&mut self, site: Site, window: &mut Window, cx: &mut Context<Self>) {
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            &trf("Delete the site \"{name}\"?", &[("name", &site.name)]),
+    fn confirm_delete_site(&mut self, site: Site, _window: &mut Window, cx: &mut Context<Self>) {
+        let answer = self.ask(
+            super::ask::AskLevel::Warning,
+            trf("Delete the site \"{name}\"?", &[("name", &site.name)]),
             Some(tr("Only the saved connection is removed; no files are touched.")),
             &[tr("Delete"), tr("Cancel")],
             cx,

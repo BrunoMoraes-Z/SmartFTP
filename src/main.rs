@@ -4,6 +4,7 @@
 mod core;
 mod i18n;
 mod mcp;
+mod platform;
 mod ui;
 mod update;
 

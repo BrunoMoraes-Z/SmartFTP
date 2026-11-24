@@ -496,12 +496,26 @@ impl Workspace {
                 )
                 .on_drag(drag, |d: &DraggedFiles, _, _, cx| cx.new(|_| d.clone()));
             let row = match folder_target {
-                Some(target) => row
-                    .drag_over::<DraggedFiles>(move |s, _, _, _| s.bg(drop_color.opacity(0.14)).border_color(drop_color.opacity(0.7)))
-                    .on_drop(cx.listener(move |this, d: &DraggedFiles, _, cx| {
-                        cx.stop_propagation();
-                        this.drop_into(side, d.clone(), target.clone(), cx);
-                    })),
+                Some(target) => {
+                    let target2 = target.clone();
+                    row.drag_over::<DraggedFiles>(move |s, _, _, _| s.bg(drop_color.opacity(0.14)).border_color(drop_color.opacity(0.7)))
+                        .on_drop(cx.listener(move |this, d: &DraggedFiles, _, cx| {
+                            cx.stop_propagation();
+                            this.drop_into(side, d.clone(), target.clone(), cx);
+                        }))
+                        // files from Explorer dropped on a remote folder go into that folder
+                        .when(side == Side::Remote, |row| {
+                            let target = target2.clone();
+                            row.drag_over::<ExternalPaths>(move |s, _, _, _| {
+                                s.bg(drop_color.opacity(0.14)).border_color(drop_color.opacity(0.7))
+                            })
+                            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                                cx.stop_propagation();
+                                let p = paths.paths().iter().map(|p| p.to_string_lossy().to_string()).collect();
+                                this.transfer(Side::Local, p, Some(target.clone()), cx);
+                            }))
+                        })
+                }
                 None => row,
             };
             list = list.child(row);

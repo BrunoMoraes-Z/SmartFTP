@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use gpui::{
-    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Pixels, Point, PromptLevel,
-    SharedString, Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
+    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Pixels, Point, SharedString,
+    Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
 };
 
 use super::components::*;
@@ -201,6 +201,10 @@ pub struct Workspace {
     pub last_side: Side,
     pub update: super::updates::UpdateState,
     pub edits: Vec<super::edit::EditWatch>,
+    pub asks: std::collections::VecDeque<super::ask::Ask>,
+    pub ask_focus: FocusHandle,
+    /// SmartFTP runs as administrator: Explorer cannot drop files on it (Windows UIPI).
+    pub elevated_notice: bool,
     last_version: u64,
     seen_jobs: HashSet<u64>,
     last_log: Option<chrono::DateTime<chrono::Local>>,
@@ -249,6 +253,9 @@ impl Workspace {
             last_side: Side::Local,
             update: super::updates::UpdateState::Idle,
             edits: vec![],
+            asks: Default::default(),
+            ask_focus: cx.focus_handle(),
+            elevated_notice: crate::platform::is_elevated(),
             last_version: 0,
             seen_jobs: HashSet::new(),
             last_log: None,
@@ -619,8 +626,9 @@ impl Workspace {
             self.navigate(side, e.path, cx);
         } else if self.core.config.lock().interface.double_click_transfers {
             self.transfer(side, vec![e.path], None, cx);
-        } else if side == Side::Local {
-            cx.open_with_system(std::path::Path::new(&e.path));
+        } else {
+            // "Open for editing": same as View / Edit (remote files are watched and uploaded on save)
+            self.view_edit(side, e, cx);
         }
     }
 
@@ -692,7 +700,7 @@ impl Workspace {
 
     // ------------------------------------------------------------ file ops
 
-    pub fn delete_entries(&mut self, side: Side, entries: Vec<Entry>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn delete_entries(&mut self, side: Side, entries: Vec<Entry>, _window: &mut Window, cx: &mut Context<Self>) {
         if entries.is_empty() {
             return;
         }
@@ -709,8 +717,8 @@ impl Workspace {
             (false, Side::Local) => trf("Delete {n} items from this computer?", &[("n", &n)]),
             (false, Side::Remote) => trf("Delete {n} items from {site}?", &[("n", &n), ("site", &site)]),
         };
-        let answer = window.prompt(
-            PromptLevel::Warning,
+        let answer = self.ask(
+            super::ask::AskLevel::Warning,
             &message,
             Some(tr("Folders are deleted with everything inside. This cannot be undone.")),
             &[tr("Delete"), tr("Cancel")],
@@ -1244,6 +1252,32 @@ impl Workspace {
     }
 }
 
+impl Workspace {
+    fn render_elevated_notice(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = theme(cx).clone();
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(10.))
+            .px(px(14.))
+            .py(px(7.))
+            .bg(t.warn.opacity(0.12))
+            .border_b_1()
+            .border_color(t.warn.opacity(0.35))
+            .text_size(px(12.))
+            .child(icon("circle-alert", 14., t.warn))
+            .child(div().flex_1().child(tr(
+                "SmartFTP is running as administrator, so Windows blocks dragging files in from Explorer. Close it and open it again from the Start menu to fix this.",
+            )))
+            .child(button("dismiss-elevated", tr("Dismiss"), None, BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
+                this.elevated_notice = false;
+                cx.notify();
+            })))
+            .into_any_element()
+    }
+}
+
 pub struct PathEdit {
     pub side: Side,
     pub input: Entity<TextInput>,
@@ -1323,6 +1357,8 @@ impl Render for Workspace {
         let rail_menu = self.render_rail_menu(cx);
         let modal = self.render_modal(window, cx);
         let toasts = self.render_toasts(cx);
+        let ask = self.render_ask(window, cx);
+        let notice = self.elevated_notice.then(|| self.render_elevated_notice(cx));
         let titlebar = self.render_titlebar(window, cx);
         // The title bar must not sit inside an element that handles mouse-down (e.g. focus
         // tracking): gpui offers caption clicks to the app first, and a handled click would
@@ -1337,6 +1373,7 @@ impl Render for Workspace {
             .font_family(super::UI_FONT)
             .text_size(px(13.))
             .child(titlebar)
+            .children(notice)
             .child(
                 div()
                     .id("workspace")
@@ -1361,6 +1398,7 @@ impl Render for Workspace {
             .children(menu)
             .children(rail_menu)
             .children(modal)
+            .children(ask)
             .child(toasts)
     }
 }

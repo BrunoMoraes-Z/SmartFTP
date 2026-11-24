@@ -202,10 +202,10 @@ impl Workspace {
                     ))
                     .child(row(
                         tr("Double-clicking a file"),
-                        tr("Transfer it to the other side, or open local files with their default app."),
+                        tr("Transfer it to the other side, or open it in your editor like View / Edit (remote files are uploaded back when you save)."),
                         self.segmented(
                             "dbl",
-                            &[(tr("Transfer"), true), (tr("Open"), false)],
+                            &[(tr("Transfer"), true), (tr("Open for editing"), false)],
                             ui.double_click_transfers,
                             Rc::new(|c, v| c.interface.double_click_transfers = v),
                             cx,

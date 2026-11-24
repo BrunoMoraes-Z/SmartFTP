@@ -106,7 +106,16 @@ where
                 }
             }
             Err(_) => {
-                for line in ftp.list(Some(path)).await? {
+                // Plain LIST hides dotfiles (.htaccess, .git, …) on most servers. Without them a
+                // folder never looks empty, so recursive delete fails; ask for them with "-a".
+                let with_hidden = ftp.list(Some(&format!("-a {path}"))).await.unwrap_or_default();
+                let lines = if with_hidden.iter().any(|l| FtpFile::try_from(l.as_str()).is_ok()) {
+                    with_hidden
+                } else {
+                    // server without "-a" support (or it took "-a" as part of the name)
+                    ftp.list(Some(path)).await?
+                };
+                for line in lines {
                     if let Ok(f) = FtpFile::try_from(line.as_str()) {
                         out.push(to_entry(path, &f, &line));
                     }

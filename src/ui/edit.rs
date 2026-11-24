@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{Context, PromptLevel, Window};
+use gpui::{Context, Window};
 
 use super::workspace::{Side, Workspace};
 use crate::core::model::{Entry, Origin};
@@ -219,8 +219,24 @@ impl Workspace {
             .map(|w| w.id)
             .collect();
         for id in changed {
-            self.ask_upload(id, window, cx);
+            if self.auto_upload_for(id) {
+                if let Some(w) = self.edits.iter().find(|w| w.id == id) {
+                    let name = w.name();
+                    self.upload_edit(id, cx);
+                    self.toast(trf("Saved {name}: uploading it to the server", &[("name", &name)]), false);
+                }
+            } else {
+                self.ask_upload(id, window, cx);
+            }
         }
+    }
+
+    /// The site's "Upload edited files automatically" setting (saved site wins over the session copy).
+    fn auto_upload_for(&self, id: u64) -> bool {
+        let Some(w) = self.edits.iter().find(|w| w.id == id) else { return false };
+        let Ok(session) = self.core.session(&w.session_id) else { return false };
+        let cfg = self.core.config.lock();
+        cfg.sites.iter().find(|s| s.id == session.site.id).map(|s| s.edit_auto_upload).unwrap_or(session.site.edit_auto_upload)
     }
 
     fn ask_upload(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
@@ -229,9 +245,9 @@ impl Workspace {
         w.stamp = stamp_of(&w.local);
         let (name, site, remote) = (w.name(), w.site_name.clone(), w.remote.clone());
         window.activate_window();
-        let answer = window.prompt(
-            PromptLevel::Info,
-            &trf("\"{name}\" was changed.", &[("name", &name)]),
+        let answer = self.ask(
+            super::ask::AskLevel::Info,
+            trf("\"{name}\" was changed.", &[("name", &name)]),
             Some(&trf("Upload it to {site} and replace {path}?", &[("site", &site), ("path", &remote)])),
             &[tr("Upload and replace"), tr("Not now"), tr("Stop editing")],
             cx,

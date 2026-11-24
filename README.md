@@ -81,7 +81,7 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
 
 ### Files and transfers
 
-- **Moving files:**
+- **Moving files** (files dragged in from Explorer can be dropped on the remote pane or on one of its folders):
   - the → / ← button on a row;
   - a double-click on a file;
   - the **Upload to… / Download to…** button for the current selection;
@@ -92,7 +92,7 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
 - **Queue**: choose **Add to queue**, from the right-click menu or the selection bar, to line transfers up without starting them. The **Queue** tab lists them. **Process queue** starts them all; ▶ starts a single one and ✕ removes it.
 - **View / Edit** (`F4`, or right-click a file):
   - remote files are downloaded to a temporary folder and opened in your editor;
-  - whenever you save, SmartFTP asks whether to upload the file and replace the one on the server;
+  - whenever you save, SmartFTP asks whether to upload the file and replace the one on the server. To skip the question for a site, turn on **Upload edited files automatically** in its settings;
   - the **Editing** tab lists the files you have open, with **Upload now** and **Stop editing**;
   - pick the editor in **Settings → General → File editor**: the system default, a detected editor (VS Code, Cursor, Notepad++, Sublime Text, Notepad) or any program. `{file}` in the command is replaced by the path.
 

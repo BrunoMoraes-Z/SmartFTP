@@ -62,6 +62,9 @@ pub struct Site {
     /// Whether AI agents may open this site through MCP.
     #[serde(default = "yes")]
     pub allow_mcp: bool,
+    /// View / Edit: upload saved files right away instead of asking.
+    #[serde(default)]
+    pub edit_auto_upload: bool,
 }
 
 fn default_icon() -> String {
@@ -91,6 +94,7 @@ impl Site {
             icon: default_icon(),
             color: default_color(),
             allow_mcp: true,
+            edit_auto_upload: false,
         }
     }
 

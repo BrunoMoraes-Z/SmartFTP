@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gpui::{Context, FontWeight, PromptLevel, SharedString, Window, div, prelude::*, px};
+use gpui::{Context, FontWeight, SharedString, Window, div, prelude::*, px};
 
 use super::components::icon;
 use super::theme::theme;
@@ -52,14 +52,14 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn confirm_install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn confirm_install(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let UpdateState::Available(rel) = self.update.clone() else { return };
         let running = self.core.jobs().iter().any(|j| !j.state.lock().finished());
         let detail =
             if running { tr("Transfers in progress will be interrupted.") } else { tr("SmartFTP restarts when the update is installed.") };
-        let answer = window.prompt(
-            PromptLevel::Info,
-            &trf("Install SmartFTP {version}?", &[("version", &rel.version.to_string())]),
+        let answer = self.ask(
+            super::ask::AskLevel::Info,
+            trf("Install SmartFTP {version}?", &[("version", &rel.version.to_string())]),
             Some(detail),
             &[tr("Install and restart"), tr("Later")],
             cx,

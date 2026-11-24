@@ -138,6 +138,13 @@ static INDEX: LazyLock<HashMap<&'static str, (&'static str, &'static str)>> =
 /// (English key, Português (Brasil), Español)
 #[rustfmt::skip]
 static STRINGS: &[(&str, &str, &str)] = &[
+    ("Transfer it to the other side, or open it in your editor like View / Edit (remote files are uploaded back when you save).", "Transfere para o outro lado, ou abre no seu editor como o Ver / Editar (arquivos remotos voltam para o servidor quando você salva).", "Lo transfiere al otro lado, o lo abre en tu editor como Ver / Editar (los archivos remotos se suben de nuevo al guardar)."),
+    ("Upload edited files automatically", "Enviar arquivos editados automaticamente", "Subir archivos editados automáticamente"),
+    ("With View / Edit, every save is uploaded right away and replaces the file on the server, without asking.", "No Ver / Editar, cada vez que você salvar o arquivo é enviado na hora e substitui o do servidor, sem perguntar.", "Con Ver / Editar, cada vez que guardes el archivo se sube al momento y reemplaza el del servidor, sin preguntar."),
+    ("Saved {name}: uploading it to the server", "{name} salvo: enviando para o servidor", "{name} guardado: subiéndolo al servidor"),
+    ("SmartFTP is running as administrator, so Windows blocks dragging files in from Explorer. Close it and open it again from the Start menu to fix this.", "O SmartFTP está rodando como administrador, então o Windows bloqueia arrastar arquivos do Explorer. Feche e abra de novo pelo menu Iniciar para resolver.", "SmartFTP se está ejecutando como administrador, así que Windows bloquea arrastrar archivos desde el Explorador. Ciérralo y ábrelo de nuevo desde el menú Inicio para solucionarlo."),
+    ("Dismiss", "Dispensar", "Descartar"),
+    ("Open for editing", "Abrir para edição", "Abrir para editar"),
     // queue and view / edit
     ("Add to queue", "Adicionar à fila", "Añadir a la cola"),
     ("Queue {n}", "Fila {n}", "Cola {n}"),

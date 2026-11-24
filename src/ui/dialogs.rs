@@ -465,6 +465,33 @@ impl Render for SiteEditor {
                         cx.notify();
                     }))),
             )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .p(px(12.))
+                    .rounded(px(8.))
+                    .bg(t.surface2)
+                    .border_1()
+                    .border_color(t.border)
+                    .child(icon("file-pen", 18., t.ink))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .gap(px(2.))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Upload edited files automatically")))
+                            .child(div().text_size(px(12.)).text_color(t.faint).child(tr(
+                                "With View / Edit, every save is uploaded right away and replaces the file on the server, without asking.",
+                            ))),
+                    )
+                    .child(toggle("ed-auto-upload", draft.edit_auto_upload, cx).on_click(cx.listener(|this, _, _, cx| {
+                        this.draft.edit_auto_upload = !this.draft.edit_auto_upload;
+                        cx.notify();
+                    }))),
+            )
             .when_some(self.error.clone(), |d, e| d.child(div().text_color(t.err).text_size(px(12.)).child(e)))
             .child(
                 div()

@@ -1,0 +1,21 @@
+# SmartFTP theme. Copy this file into the themes folder, rename it and edit the colors.
+name = "One Dark Pro"
+appearance = "dark"   # "light" or "dark"
+
+[colors]
+bg          = "#282C34"   # window background
+surface     = "#21252B"   # panels, sidebar
+surface2    = "#2C313A"   # inputs, raised items
+hover       = "#323842"   # hover / active rows
+border      = "#3E4451"   # hairlines
+ink         = "#ABB2BF"   # primary text
+muted       = "#8B929E"   # secondary text
+faint       = "#5C6370"   # tertiary text, hints
+accent      = "#61AFEF"   # primary buttons
+accent_ink  = "#1E2127"   # text on accent
+accent_soft = "#61AFEF1F"   # selection background (with alpha)
+signal      = "#E5C07B"   # transfer progress, highlights
+ok          = "#98C379"   # connected / success
+warn        = "#D19A66"   # busy / warning
+err         = "#E06C75"   # errors, destructive
+folder      = "#E5C07B"   # folder icons

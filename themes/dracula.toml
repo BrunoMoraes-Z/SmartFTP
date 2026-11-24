@@ -1,0 +1,21 @@
+# SmartFTP theme. Copy this file into the themes folder, rename it and edit the colors.
+name = "Dracula"
+appearance = "dark"   # "light" or "dark"
+
+[colors]
+bg          = "#282A36"   # window background
+surface     = "#21222C"   # panels, sidebar
+surface2    = "#343746"   # inputs, raised items
+hover       = "#3C3F52"   # hover / active rows
+border      = "#44475A"   # hairlines
+ink         = "#F8F8F2"   # primary text
+muted       = "#C3C5D9"   # secondary text
+faint       = "#6272A4"   # tertiary text, hints
+accent      = "#BD93F9"   # primary buttons
+accent_ink  = "#282A36"   # text on accent
+accent_soft = "#BD93F926"   # selection background (with alpha)
+signal      = "#FFB86C"   # transfer progress, highlights
+ok          = "#50FA7B"   # connected / success
+warn        = "#F1FA8C"   # busy / warning
+err         = "#FF5555"   # errors, destructive
+folder      = "#F1FA8C"   # folder icons

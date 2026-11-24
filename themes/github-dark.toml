@@ -1,0 +1,21 @@
+# SmartFTP theme. Copy this file into the themes folder, rename it and edit the colors.
+name = "GitHub Dark"
+appearance = "dark"   # "light" or "dark"
+
+[colors]
+bg          = "#0D1117"   # window background
+surface     = "#161B22"   # panels, sidebar
+surface2    = "#1C2128"   # inputs, raised items
+hover       = "#262C36"   # hover / active rows
+border      = "#30363D"   # hairlines
+ink         = "#E6EDF3"   # primary text
+muted       = "#9198A1"   # secondary text
+faint       = "#6E7681"   # tertiary text, hints
+accent      = "#238636"   # primary buttons
+accent_ink  = "#FFFFFF"   # text on accent
+accent_soft = "#388BFD1A"   # selection background (with alpha)
+signal      = "#58A6FF"   # transfer progress, highlights
+ok          = "#3FB950"   # connected / success
+warn        = "#D29922"   # busy / warning
+err         = "#F85149"   # errors, destructive
+folder      = "#D29922"   # folder icons

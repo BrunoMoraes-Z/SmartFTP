@@ -1,0 +1,21 @@
+# SmartFTP theme. Copy this file into the themes folder, rename it and edit the colors.
+name = "Graphite Dark"
+appearance = "dark"   # "light" or "dark"
+
+[colors]
+bg          = "#121211"   # window background
+surface     = "#181817"   # panels, sidebar
+surface2    = "#1F1F1D"   # inputs, raised items
+hover       = "#262624"   # hover / active rows
+border      = "#2C2B28"   # hairlines
+ink         = "#ECEAE4"   # primary text
+muted       = "#A3A097"   # secondary text
+faint       = "#6E6B63"   # tertiary text, hints
+accent      = "#ECEAE4"   # primary buttons
+accent_ink  = "#151513"   # text on accent
+accent_soft = "#ECEAE414"   # selection background (with alpha)
+signal      = "#F0A23B"   # transfer progress, highlights
+ok          = "#5BB974"   # connected / success
+warn        = "#F0A23B"   # busy / warning
+err         = "#E5484D"   # errors, destructive
+folder      = "#D9A441"   # folder icons

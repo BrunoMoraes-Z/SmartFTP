@@ -1,0 +1,28 @@
+use std::borrow::Cow;
+
+use gpui::{AssetSource, SharedString};
+
+/// Lucide icons (ISC license), embedded at compile time.
+pub struct Assets;
+
+macro_rules! embed_icons {
+    ($path:expr, $($name:literal),* $(,)?) => {
+        match $path {
+            $(concat!("icons/", $name, ".svg") => Some(include_bytes!(concat!("../../assets/icons/", $name, ".svg")).as_slice()),)*
+            _ => None,
+        }
+    };
+}
+
+pub const ICON_NAMES: &[&str] = &["archive","arrow-down","arrow-left","arrow-right","arrow-up","bot","box","briefcase","check","chevron-down","chevron-right","circle-alert","cloud","copy","corner-left-up","cpu","database","download","eye","eye-off","file","file-code","file-plus","file-text","film","flask-conical","folder","folder-git-2","folder-plus","folder-symlink","globe","hard-drive","house","image","info","key-round","laptop","minus","monitor","moon","package","palette","panel-left-close","panel-left-open","pause","pencil","play","plug-zap","plus","refresh-cw","rocket","rotate-cw","search","server","server-cog","settings","shield","sparkles","square","sun","terminal","trash-2","unplug","upload","user","x","zap"];
+
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        let bytes: Option<&'static [u8]> = embed_icons!(path, "archive","arrow-down","arrow-left","arrow-right","arrow-up","bot","box","briefcase","check","chevron-down","chevron-right","circle-alert","cloud","copy","corner-left-up","cpu","database","download","eye","eye-off","file","file-code","file-plus","file-text","film","flask-conical","folder","folder-git-2","folder-plus","folder-symlink","globe","hard-drive","house","image","info","key-round","laptop","minus","monitor","moon","package","palette","panel-left-close","panel-left-open","pause","pencil","play","plug-zap","plus","refresh-cw","rocket","rotate-cw","search","server","server-cog","settings","shield","sparkles","square","sun","terminal","trash-2","unplug","upload","user","x","zap");
+        Ok(bytes.map(Cow::Borrowed))
+    }
+
+    fn list(&self, _path: &str) -> gpui::Result<Vec<SharedString>> {
+        Ok(ICON_NAMES.iter().map(|n| SharedString::from(format!("icons/{n}.svg"))).collect())
+    }
+}

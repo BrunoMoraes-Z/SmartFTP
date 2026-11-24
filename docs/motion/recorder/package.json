@@ -1,0 +1,13 @@
+{
+  "name": "recorder",
+  "version": "1.0.0",
+  "description": "Records the SmartFTP motion tour to video",
+  "scripts": {
+    "record": "node record.mjs"
+  },
+  "type": "module",
+  "dependencies": {
+    "puppeteer-core": "^23.11.1"
+  },
+  "private": true
+}

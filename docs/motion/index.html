@@ -369,6 +369,7 @@ header.top p { margin: 0; color: var(--muted); font-size: 14px; flex: 1 1 280px;
 
   // ---------- timeline
   const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+  window.__tour = tl; // lets docs/motion/record.mjs seek frame by frame
   const cap = (eye, line, at) => {
     tl.to("#caption", { opacity: 0, y: 6, duration: 0.25 }, at)
       .set("#capEye", { textContent: eye }, at + 0.25)
@@ -457,7 +458,7 @@ header.top p { margin: 0; color: var(--muted); font-size: 14px; flex: 1 1 280px;
   tl.to("#app", { x: 50, scale: 0.72, duration: 0.9, ease: "power3.inOut" }, 18.1)
     .to("#agent", { opacity: 1, x: 0, duration: 0.7 }, 18.4).from("#agent", { x: -40, duration: 0.7 }, 18.4)
     .to("#m0", { opacity: 1, y: 0, duration: 0.4 }, 19.1).from("#m0", { y: 8, duration: 0.4 }, 19.1);
-  const call = (n, at) => tl.to("#c" + n, { opacity: 1, duration: 0.3 }, at).from("#c" + n, { y: 8, duration: 0.3 }, at).to(`#c${n} .res`, { opacity: 1, duration: 0.25 }, at + 0.9);
+  const call = (n, at, resultAt = at + 0.9) => tl.to("#c" + n, { opacity: 1, duration: 0.3 }, at).from("#c" + n, { y: 8, duration: 0.3 }, at).to(`#c${n} .res`, { opacity: 1, duration: 0.25 }, resultAt);
   call(1, 20.2);
   call(2, 21.6);
   // agent's session shows up in the window
@@ -475,7 +476,7 @@ header.top p { margin: 0; color: var(--muted); font-size: 14px; flex: 1 1 280px;
     .set("#rLabel", { textContent: "staging", color: "#5bb974" }, 22.7)
     .set("#rPath", { innerHTML: "/ var / www / <em>&nbsp;staging</em>" }, 22.7)
     .to("#toast", { opacity: 0, duration: 0.3 }, 25.0);
-  call(3, 23.5);
+  call(3, 23.5, 25.45); // upload waits for the transfer, so its result lands when the bar is full
   tl.set("#j3", { display: "grid" }, 23.7)
     .set(".job:not(#j3)", { display: "none" }, 23.7)
     .to("#j3", { opacity: 1, duration: 0.25 }, 23.7)

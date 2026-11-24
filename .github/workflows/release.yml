@@ -72,6 +72,8 @@ jobs:
           }
           & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" "/DSourceExe=..\target\release\smartftp.exe" "/DOutputDir=..\out" installer\smartftp.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = "out/SmartFTP-${{ steps.version.outputs.version }}-setup.exe"
+          (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() | Set-Content "$setup.sha256" -NoNewline
           Get-ChildItem out
 
       - name: Publish release
@@ -86,3 +88,4 @@ jobs:
             out/smartftp-windows-x86_64.exe.sha256
             out/SmartFTP-${{ steps.version.outputs.version }}-windows-x86_64.zip
             out/SmartFTP-${{ steps.version.outputs.version }}-setup.exe
+            out/SmartFTP-${{ steps.version.outputs.version }}-setup.exe.sha256

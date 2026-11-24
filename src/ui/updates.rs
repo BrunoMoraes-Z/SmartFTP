@@ -80,7 +80,8 @@ impl Workspace {
             cx,
             async move { tokio::task::spawn_blocking(move || update::install(&rel, &done)).await.map_err(|e| anyhow::anyhow!(e))? },
             move |this, r, cx| match r {
-                Ok(()) => {
+                Ok(update::Installed::InstallerLaunched) => cx.quit(),
+                Ok(update::Installed::Replaced) => {
                     if let Err(e) = update::restart() {
                         this.toast(format!("{}: {e:#}", tr("Updated. Restart SmartFTP to use the new version")), false);
                         this.update = UpdateState::UpToDate;
@@ -103,7 +104,7 @@ impl Workspace {
         let (label, progress): (String, Option<f32>) = match &self.update {
             UpdateState::Available(rel) => (trf("Update to {version}", &[("version", &rel.version.to_string())]), None),
             UpdateState::Downloading { release, done } => {
-                let total = release.asset_size.max(1) as f32;
+                let total = release.download_size().max(1) as f32;
                 let frac = (done.load(Ordering::Relaxed) as f32 / total).min(1.0);
                 (trf("Updating… {pct}%", &[("pct", &format!("{:.0}", frac * 100.))]), Some(frac))
             }

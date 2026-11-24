@@ -31,14 +31,24 @@ A desktop FTP / FTPS / SFTP client written in Rust with [GPUI](https://www.gpui.
   - General: hidden files, double-click action, delete confirmation, transfer panel behaviour.
   - Connection: timeout, number of retries, delay between failed attempts, automatic reconnect, SFTP keep-alive, FTP passive / extended passive / active mode, and a fix for passive-mode addresses behind NAT.
   - Transfers: maximum simultaneous transfers, retries for failed transfers, download and upload speed limits, timestamp preservation, and what to do when a file already exists (overwrite, overwrite if newer, overwrite if different, rename, skip).
+- **Languages**: English, Brazilian Portuguese and Spanish. The system language is used when it is one of these, otherwise English. Change it in Settings → General.
+- **Automatic updates**: on startup SmartFTP checks GitHub Releases for a newer version and shows an "Update" button in the title bar. Updates are verified with SHA-256 before they replace the executable, and nothing is installed without asking. The check can be turned off.
 - **Themes**: Graphite Dark/Light, GitHub Dark/Light, One Dark Pro and Dracula, with System / Light / Dark mode. Creating your own takes one TOML file.
 - **MCP server** over Streamable HTTP at `127.0.0.1:7331/mcp`, protected by a bearer token, with 17 tools. Sessions an agent opens show up live in the window, and sessions you open are available to agents.
 
 ## Build and run
 
-```bash
-cargo run --release
+The project uses [just](https://github.com/casey/just) with PowerShell 7 (`pwsh`), with no extra modules:
+
+```powershell
+just build      # release build, copied to ./dist with README and themes
+just package    # build + dist/SmartFTP-<version>-windows-x86_64.zip
+just run        # debug build
+just check      # rustfmt, clippy and tests (same as CI)
+just            # list every recipe
 ```
+
+Without just: `cargo run --release`.
 
 Requires Rust 1.88+ (edition 2024). No OpenSSL or NASM is needed because crypto uses `ring`. On Windows the app icon is embedded into the executable by `build.rs`.
 
@@ -55,6 +65,22 @@ Keyboard shortcuts:
 | `Ctrl+A` | Select all |
 | `Ctrl+L` | Type a path |
 | `Esc` | Close dialog / menu |
+
+## Releases and versioning
+
+The version lives in `Cargo.toml`. To publish a release:
+
+```powershell
+just release minor   # or patch / major / 1.4.0: bumps Cargo.toml, commits and tags vX.Y.Z
+just publish         # pushes the commit and the tag
+```
+
+Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`. The workflow checks that the tag matches `Cargo.toml`, runs the tests, builds the Windows binary and publishes a GitHub Release with:
+
+- `smartftp-windows-x86_64.exe` and its `.sha256` (used by the in-app updater);
+- `SmartFTP-<version>-windows-x86_64.zip` (for manual download).
+
+`.github/workflows/ci.yml` runs formatting, clippy and tests on every push and pull request.
 
 ## MCP for agents
 
@@ -123,7 +149,10 @@ src/core/      protocols and state (no UI): sites/config, FTP (suppaftp), SFTP (
 src/mcp.rs     MCP server (rmcp): HTTP + stdio
 src/ui/        GPUI: workspace (state, actions), rail (connection rail), panes (file panes + queue),
                dialogs, settings + settings_pages, theme, title bar, text input
+src/i18n.rs    UI translations (en, pt-BR, es) and language detection
+src/update.rs  self-update from GitHub Releases
 design/        OpenPen prototype (smartftp.pen) and exported PNGs, including the app icon
+docs/motion/   animated product tour (open index.html in a browser)
 themes/        built-in themes
 assets/        app icon (.ico / .png) and Lucide icons (ISC license)
 ```

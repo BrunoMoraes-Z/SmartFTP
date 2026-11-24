@@ -138,6 +138,38 @@ static INDEX: LazyLock<HashMap<&'static str, (&'static str, &'static str)>> =
 /// (English key, Português (Brasil), Español)
 #[rustfmt::skip]
 static STRINGS: &[(&str, &str, &str)] = &[
+    // queue and view / edit
+    ("Add to queue", "Adicionar à fila", "Añadir a la cola"),
+    ("Queue {n}", "Fila {n}", "Cola {n}"),
+    ("Clear queue", "Limpar fila", "Vaciar cola"),
+    ("Process queue ({n})", "Processar fila ({n})", "Procesar cola ({n})"),
+    ("The queue is empty. Right-click files and choose Add to queue, then Process queue to start them.", "A fila está vazia. Clique com o botão direito nos arquivos, escolha Adicionar à fila e depois Processar fila para iniciá-los.", "La cola está vacía. Haz clic derecho en los archivos, elige Añadir a la cola y luego Procesar cola para iniciarlos."),
+    ("in queue", "na fila", "en cola"),
+    ("Start now", "Iniciar agora", "Iniciar ahora"),
+    ("Remove from queue", "Remover da fila", "Quitar de la cola"),
+    ("Added {n} item(s) to the queue", "{n} item(ns) adicionado(s) à fila", "{n} elemento(s) añadido(s) a la cola"),
+    ("Start transfers waiting in the queue", "Inicia as transferências que estão na fila", "Inicia las transferencias que esperan en la cola"),
+    ("View / Edit", "Ver / Editar", "Ver / Editar"),
+    ("Editing {n}", "Editando {n}", "Editando {n}"),
+    ("Opening {name}…", "Abrindo {name}…", "Abriendo {name}…"),
+    ("Could not open the file: {error}", "Não foi possível abrir o arquivo: {error}", "No se pudo abrir el archivo: {error}"),
+    ("\"{name}\" was changed.", "\"{name}\" foi alterado.", "\"{name}\" se modificó."),
+    ("Upload it to {site} and replace {path}?", "Enviar para {site} e substituir {path}?", "¿Subirlo a {site} y reemplazar {path}?"),
+    ("Upload and replace", "Enviar e substituir", "Subir y reemplazar"),
+    ("Not now", "Agora não", "Ahora no"),
+    ("Stop editing", "Parar de editar", "Dejar de editar"),
+    ("The session for this file was closed.", "A sessão deste arquivo foi fechada.", "La sesión de este archivo se cerró."),
+    ("Uploading {name}…", "Enviando {name}…", "Subiendo {name}…"),
+    ("No files are being edited. Right-click a remote file and choose View / Edit (F4).", "Nenhum arquivo em edição. Clique com o botão direito num arquivo remoto e escolha Ver / Editar (F4).", "No se está editando ningún archivo. Haz clic derecho en un archivo remoto y elige Ver / Editar (F4)."),
+    ("uploaded {n}×", "enviado {n}×", "subido {n}×"),
+    ("Upload now", "Enviar agora", "Subir ahora"),
+    ("File editor", "Editor de arquivos", "Editor de archivos"),
+    ("Open files with", "Abrir arquivos com", "Abrir archivos con"),
+    ("Used by View / Edit (F4). Remote files are downloaded to a temporary folder; when you save, SmartFTP asks whether to upload the file and replace the one on the server.", "Usado por Ver / Editar (F4). Arquivos remotos são baixados para uma pasta temporária; quando você salva, o SmartFTP pergunta se deve enviar o arquivo e substituir o do servidor.", "Lo usa Ver / Editar (F4). Los archivos remotos se descargan a una carpeta temporal; al guardar, SmartFTP pregunta si debe subir el archivo y reemplazar el del servidor."),
+    ("System default", "Padrão do sistema", "Predeterminado del sistema"),
+    ("Choose program…", "Escolher programa…", "Elegir programa…"),
+    ("Choose editor", "Escolher editor", "Elegir editor"),
+    ("Command line. {file} is replaced by the file path; leave empty to use the system default app.", "Linha de comando. {file} é substituído pelo caminho do arquivo; deixe vazio para usar o app padrão do sistema.", "Línea de comandos. {file} se reemplaza por la ruta del archivo; déjalo vacío para usar la app predeterminada del sistema."),
     // updates
     ("SmartFTP {version} is available.", "SmartFTP {version} está disponível.", "SmartFTP {version} está disponible."),
     ("SmartFTP is up to date.", "O SmartFTP está atualizado.", "SmartFTP está actualizado."),
@@ -488,6 +520,7 @@ mod tests {
             include_str!("ui/assets.rs"),
             include_str!("ui/components.rs"),
             include_str!("ui/dialogs.rs"),
+            include_str!("ui/edit.rs"),
             include_str!("ui/input.rs"),
             include_str!("ui/mod.rs"),
             include_str!("ui/panes.rs"),
@@ -496,6 +529,7 @@ mod tests {
             include_str!("ui/settings_pages.rs"),
             include_str!("ui/theme.rs"),
             include_str!("ui/titlebar.rs"),
+            include_str!("ui/updates.rs"),
             include_str!("ui/workspace.rs"),
         ];
         let mut missing = vec![];
@@ -508,7 +542,8 @@ mod tests {
                 }
                 let rest = &src[i + 2..];
                 let rest = rest.strip_prefix('f').unwrap_or(rest);
-                let Some(lit) = rest.strip_prefix("(\"") else { continue };
+                // `tr(` may be followed by a line break before the literal
+                let Some(lit) = rest.strip_prefix('(').map(str::trim_start).and_then(|r| r.strip_prefix('"')) else { continue };
                 let mut end = None;
                 let mut escaped = false;
                 for (j, c) in lit.char_indices() {

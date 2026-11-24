@@ -62,6 +62,9 @@ pub enum Direction {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", content = "error", rename_all = "lowercase")]
 pub enum JobState {
+    /// In the transfer queue, waiting for "Process queue" (FileZilla-style).
+    Pending,
+    /// Started; waiting for a free transfer slot.
     Queued,
     Running,
     Done,
@@ -72,7 +75,7 @@ pub enum JobState {
 
 impl JobState {
     pub fn finished(&self) -> bool {
-        !matches!(self, JobState::Queued | JobState::Running)
+        !matches!(self, JobState::Pending | JobState::Queued | JobState::Running)
     }
 }
 
@@ -549,12 +552,113 @@ impl Core {
             && let Ok(session) = self.session(&job.session_id)
         {
             let batch = self.next();
-            self.push_job(&session, job.direction, job.local.clone(), job.remote.clone(), job.total, job.mtime, batch, job.origin.clone());
+            self.push_job(
+                &session,
+                job.direction,
+                job.local.clone(),
+                job.remote.clone(),
+                job.total,
+                job.mtime,
+                batch,
+                job.origin.clone(),
+                false,
+            );
         }
     }
 
+    pub fn pending_jobs(&self) -> Vec<Arc<Job>> {
+        self.jobs.lock().iter().filter(|j| *j.state.lock() == JobState::Pending).cloned().collect()
+    }
+
+    /// Start queued (pending) transfers: all of them, or only `ids`. Returns how many started.
+    /// A transfer whose session was closed is marked failed.
+    pub fn process_queue(self: &Arc<Self>, ids: Option<&[u64]>) -> usize {
+        let pending: Vec<Arc<Job>> = self.pending_jobs().into_iter().filter(|j| ids.is_none_or(|ids| ids.contains(&j.id))).collect();
+        let mut started = 0;
+        for job in pending {
+            match self.session(&job.session_id) {
+                Ok(session) => {
+                    *job.state.lock() = JobState::Queued;
+                    self.spawn_job(session, job);
+                    started += 1;
+                }
+                Err(_) => {
+                    *job.state.lock() = JobState::Failed("the session was closed; reconnect and retry".into());
+                    *job.finished.lock() = Some(Instant::now());
+                }
+            }
+        }
+        self.touch();
+        started
+    }
+
+    /// Remove transfers from the list. Pending and finished ones disappear; running ones are cancelled.
+    pub fn remove_jobs(&self, ids: &[u64]) {
+        let mut jobs = self.jobs.lock();
+        jobs.retain(|j| {
+            if !ids.contains(&j.id) {
+                return true;
+            }
+            let st = j.state.lock().clone();
+            if matches!(st, JobState::Queued | JobState::Running) {
+                j.progress.cancel.store(true, Ordering::Relaxed);
+                return true;
+            }
+            false
+        });
+        drop(jobs);
+        self.touch();
+    }
+
+    /// Drop every pending transfer from the queue.
+    pub fn clear_queue(&self) {
+        self.jobs.lock().retain(|j| *j.state.lock() != JobState::Pending);
+        self.touch();
+    }
+
+    /// Upload one file to an exact remote path, always replacing it (used after "View / Edit").
+    pub fn upload_replace(self: &Arc<Self>, session: &Arc<Session>, local: PathBuf, remote: String, origin: Origin) -> Result<u64> {
+        let meta = std::fs::metadata(&local).map_err(|e| anyhow!("{}: {e}", local.display()))?;
+        let batch = self.next();
+        self.push_job(session, Direction::Upload, local, remote.clone(), meta.len(), None, batch, origin.clone(), false);
+        self.record(&origin, "upload", &format!("{}:{remote}", session.site.name), &Ok::<(), anyhow::Error>(()));
+        Ok(batch)
+    }
+
+    /// Download a remote file into a private temp folder for editing and return its local path.
+    pub async fn fetch_for_edit(&self, session: &Session, remote: &str, origin: &Origin) -> Result<PathBuf> {
+        let remote = session.resolve(remote);
+        let name = remote.trim_end_matches('/').rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("file").to_string();
+        // one folder per site + remote path, so two files with the same name never collide
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (&session.site.id, &session.site.host, &remote).hash(&mut h);
+            format!("{:016x}", h.finish())
+        };
+        let dir = std::env::temp_dir().join("SmartFTP").join("edit").join(key);
+        std::fs::create_dir_all(&dir)?;
+        let local = dir.join(&name);
+        let r = self
+            .call(session, |fs| {
+                let (remote, local) = (remote.clone(), local.clone());
+                async move { fs.download(&remote, &local, &Progress::default()).await }
+            })
+            .await;
+        self.record(origin, "edit", &format!("{}:{remote}", session.site.name), &r);
+        r.map(|_| local)
+    }
+
     /// Upload local files or folders (recursively) into `remote_dir`. Returns the batch id.
-    pub async fn upload(self: &Arc<Self>, session: &Arc<Session>, locals: Vec<PathBuf>, remote_dir: &str, origin: Origin) -> Result<u64> {
+    /// With `queue_only`, the transfers are added to the queue as pending and start with `process_queue`.
+    pub async fn upload(
+        self: &Arc<Self>,
+        session: &Arc<Session>,
+        locals: Vec<PathBuf>,
+        remote_dir: &str,
+        origin: Origin,
+        queue_only: bool,
+    ) -> Result<u64> {
         let remote_dir = session.resolve(remote_dir);
         let batch = self.next();
         let action = self.config.lock().transfers.on_exists;
@@ -588,6 +692,7 @@ impl Core {
                                     mtime_of(&m),
                                     batch,
                                     origin.clone(),
+                                    queue_only,
                                 );
                             } else {
                                 self.push_skipped(
@@ -615,6 +720,7 @@ impl Core {
                         mtime_of(&meta),
                         batch,
                         origin.clone(),
+                        queue_only,
                     ),
                     None => self.push_skipped(
                         session,
@@ -628,7 +734,12 @@ impl Core {
                 }
             }
         }
-        self.record(&origin, "upload", &format!("{}:{remote_dir}", session.site.name), &Ok::<(), anyhow::Error>(()));
+        self.record(
+            &origin,
+            if queue_only { "queue_upload" } else { "upload" },
+            &format!("{}:{remote_dir}", session.site.name),
+            &Ok::<(), anyhow::Error>(()),
+        );
         Ok(batch)
     }
 
@@ -660,7 +771,15 @@ impl Core {
     }
 
     /// Download remote files or folders (recursively) into `local_dir`. Returns the batch id.
-    pub async fn download(self: &Arc<Self>, session: &Arc<Session>, remotes: Vec<String>, local_dir: &Path, origin: Origin) -> Result<u64> {
+    /// With `queue_only`, the transfers are added to the queue as pending and start with `process_queue`.
+    pub async fn download(
+        self: &Arc<Self>,
+        session: &Arc<Session>,
+        remotes: Vec<String>,
+        local_dir: &Path,
+        origin: Origin,
+        queue_only: bool,
+    ) -> Result<u64> {
         let batch = self.next();
         let action = self.config.lock().transfers.on_exists;
         std::fs::create_dir_all(local_dir)?;
@@ -689,6 +808,7 @@ impl Core {
                                     e.modified,
                                     batch,
                                     origin.clone(),
+                                    queue_only,
                                 ),
                                 None => self.push_skipped(
                                     session,
@@ -709,12 +829,27 @@ impl Core {
                 let (size, mtime) = found.map(|e| (e.size, e.modified)).unwrap_or((0, None));
                 let existing = local_listing(local_dir);
                 match resolve_target(action, size, mtime, &name, &existing) {
-                    Some(ln) => self.push_job(session, Direction::Download, local_dir.join(ln), remote, size, mtime, batch, origin.clone()),
+                    Some(ln) => self.push_job(
+                        session,
+                        Direction::Download,
+                        local_dir.join(ln),
+                        remote,
+                        size,
+                        mtime,
+                        batch,
+                        origin.clone(),
+                        queue_only,
+                    ),
                     None => self.push_skipped(session, Direction::Download, local_dir.join(&name), remote, size, batch, origin.clone()),
                 }
             }
         }
-        self.record(&origin, "download", &format!("{} -> {}", session.site.name, local_dir.display()), &Ok::<(), anyhow::Error>(()));
+        self.record(
+            &origin,
+            if queue_only { "queue_download" } else { "download" },
+            &format!("{} -> {}", session.site.name, local_dir.display()),
+            &Ok::<(), anyhow::Error>(()),
+        );
         Ok(batch)
     }
 
@@ -788,10 +923,17 @@ impl Core {
         mtime: Option<i64>,
         batch: u64,
         origin: Origin,
+        pending: bool,
     ) {
-        let job = self.new_job(session, direction, local, remote, total, mtime, batch, origin, JobState::Queued);
+        let state = if pending { JobState::Pending } else { JobState::Queued };
+        let job = self.new_job(session, direction, local, remote, total, mtime, batch, origin, state);
+        if !pending {
+            self.spawn_job(session.clone(), job);
+        }
+    }
+
+    fn spawn_job(self: &Arc<Self>, session: Arc<Session>, job: Arc<Job>) {
         let core = self.clone();
-        let session = session.clone();
         self.rt.spawn(async move {
             let _slot = core.acquire_slot(&job).await;
             if job.progress.cancelled() {

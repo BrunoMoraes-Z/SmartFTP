@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod components;
 pub mod dialogs;
+pub mod edit;
 pub mod input;
 pub mod panes;
 pub mod rail;

@@ -36,6 +36,7 @@ pub const TOOLS: &[(&str, &str)] = &[
     ("list_transfers", "Transfer queue status"),
     ("cancel_transfer", "Cancel a queued or running transfer"),
     ("list_local_dir", "List a directory on this computer"),
+    ("process_queue", "Start transfers waiting in the queue"),
 ];
 
 #[derive(Clone)]
@@ -159,6 +160,10 @@ pub struct UploadArgs {
     /// Wait for the transfers to finish (default true, max 10 minutes).
     #[serde(default)]
     pub wait: Option<bool>,
+    /// Only add the transfers to the queue (state "pending") without starting them.
+    /// The user, or `process_queue`, starts them later.
+    #[serde(default)]
+    pub queue_only: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -171,6 +176,20 @@ pub struct DownloadArgs {
     /// Wait for the transfers to finish (default true, max 10 minutes).
     #[serde(default)]
     pub wait: Option<bool>,
+    /// Only add the transfers to the queue (state "pending") without starting them.
+    /// The user, or `process_queue`, starts them later.
+    #[serde(default)]
+    pub queue_only: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ProcessQueueArgs {
+    /// Transfer ids to start (see list_transfers). Empty = every pending transfer.
+    #[serde(default)]
+    pub ids: Vec<u64>,
+    /// Wait for the started transfers to finish (default false, max 10 minutes).
+    #[serde(default)]
+    pub wait: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -323,25 +342,25 @@ impl SmartFtpMcp {
     }
 
     #[tool(
-        description = "Upload local files or folders to a remote directory. Transfers show up in the SmartFTP queue. By default waits for completion and returns per-file results."
+        description = "Upload local files or folders to a remote directory. Transfers show up in the SmartFTP queue. By default waits for completion and returns per-file results. With queue_only they are only queued (pending) until process_queue."
     )]
     async fn upload(&self, peer: Peer<RoleServer>, Parameters(args): Parameters<UploadArgs>) -> Result<String, String> {
         self.guard("upload")?;
         let s = self.session(&args.session)?;
         let locals = args.local_paths.iter().map(|p| PathBuf::from(crate::core::sftp::expand_tilde(p))).collect();
-        let batch = self.core.upload(&s, locals, &args.remote_dir, Self::origin(&peer)).await.map_err(err)?;
-        self.batch_result(batch, args.wait.unwrap_or(true)).await
+        let batch = self.core.upload(&s, locals, &args.remote_dir, Self::origin(&peer), args.queue_only).await.map_err(err)?;
+        self.batch_result(batch, !args.queue_only && args.wait.unwrap_or(true)).await
     }
 
     #[tool(
-        description = "Download remote files or folders to a local directory. By default waits for completion and returns per-file results."
+        description = "Download remote files or folders to a local directory. By default waits for completion and returns per-file results. With queue_only they are only queued (pending) until process_queue."
     )]
     async fn download(&self, peer: Peer<RoleServer>, Parameters(args): Parameters<DownloadArgs>) -> Result<String, String> {
         self.guard("download")?;
         let s = self.session(&args.session)?;
         let dir = PathBuf::from(crate::core::sftp::expand_tilde(&args.local_dir));
-        let batch = self.core.download(&s, args.remote_paths, &dir, Self::origin(&peer)).await.map_err(err)?;
-        self.batch_result(batch, args.wait.unwrap_or(true)).await
+        let batch = self.core.download(&s, args.remote_paths, &dir, Self::origin(&peer), args.queue_only).await.map_err(err)?;
+        self.batch_result(batch, !args.queue_only && args.wait.unwrap_or(true)).await
     }
 
     #[tool(description = "List transfers in the queue with progress and state.")]
@@ -356,6 +375,28 @@ impl SmartFtpMcp {
         self.guard("cancel_transfer")?;
         self.core.cancel_job(args.id);
         Ok("cancel requested".into())
+    }
+
+    #[tool(
+        description = "Start transfers waiting in the queue (state \"pending\", added by the user or with queue_only). Pass ids to start only some of them."
+    )]
+    async fn process_queue(&self, Parameters(args): Parameters<ProcessQueueArgs>) -> Result<String, String> {
+        self.guard("process_queue")?;
+        let ids = if args.ids.is_empty() { self.core.pending_jobs().iter().map(|j| j.id).collect() } else { args.ids.clone() };
+        let started = self.core.process_queue(Some(&ids));
+        if !args.wait || started == 0 {
+            return to_json(json!({ "started": started }));
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(600);
+        loop {
+            let jobs: Vec<_> = self.core.jobs().into_iter().filter(|j| ids.contains(&j.id)).collect();
+            if jobs.iter().all(|j| j.state.lock().finished()) || std::time::Instant::now() > deadline {
+                let summaries: Vec<_> = jobs.iter().map(|j| j.summary()).collect();
+                let failed = summaries.iter().filter(|j| matches!(j.state, crate::core::JobState::Failed(_))).count();
+                return to_json(json!({ "started": started, "failed": failed, "transfers": summaries }));
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
 
     #[tool(description = "List a directory on the local computer (to find files to upload).")]

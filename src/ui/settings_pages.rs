@@ -235,6 +235,7 @@ impl Workspace {
                         &t,
                     )),
             )
+            .child(self.render_editor_section(cx))
             .child(
                 section(tr("Updates"), &t)
                     .child(row(
@@ -277,6 +278,64 @@ impl Workspace {
                 )),
                 &t,
             )))
+    }
+
+    fn set_editor(&mut self, command: String, cx: &mut Context<Self>) {
+        let input = self.settings.editor_input.clone();
+        input.update(cx, |i, cx| i.set_text(command.clone(), cx));
+        self.core.update_config(move |c| c.interface.editor = command);
+        cx.notify();
+    }
+
+    fn render_editor_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let current = self.core.config.lock().interface.editor.clone();
+        let presets = super::edit::detect_editors();
+        let using_default = current.trim().is_empty();
+        section(tr("File editor"), &t).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .px(px(14.))
+                .py(px(12.))
+                .border_t_1()
+                .border_color(t.border.opacity(0.6))
+                .child(div().font_weight(FontWeight::MEDIUM).child(tr("Open files with")))
+                .child(div().text_size(px(12.)).text_color(t.faint).child(tr(
+                    "Used by View / Edit (F4). Remote files are downloaded to a temporary folder; when you save, SmartFTP asks whether to upload the file and replace the one on the server.",
+                )))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(6.))
+                        .child(
+                            button("editor-default", tr("System default"), if using_default { Some("check") } else { None }, if using_default { BtnKind::Primary } else { BtnKind::Outline }, cx)
+                                .on_click(cx.listener(|this, _, _, cx| this.set_editor(String::new(), cx))),
+                        )
+                        .children(presets.into_iter().map(|(label, command)| {
+                            let on = current.trim() == command;
+                            let cmd = command.clone();
+                            button(SharedString::from(format!("editor-{label}")), label, if on { Some("check") } else { None }, if on { BtnKind::Primary } else { BtnKind::Outline }, cx)
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_editor(cmd.clone(), cx)))
+                        }))
+                        .child(button("editor-browse", tr("Choose program…"), Some("folder-open"), BtnKind::Ghost, cx).on_click(cx.listener(|_this, _, window, cx| {
+                            let rx = cx.prompt_for_paths(gpui::PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(tr("Choose editor").into()) });
+                            cx.spawn_in(window, async move |this, cx| {
+                                if let Ok(Ok(Some(paths))) = rx.await
+                                    && let Some(p) = paths.first()
+                                {
+                                    let command = format!("\"{}\" \"{{file}}\"", p.display());
+                                    this.update(cx, |this, cx| this.set_editor(command, cx)).ok();
+                                }
+                            })
+                            .detach();
+                        }))),
+                )
+                .child(self.settings.editor_input.clone())
+                .child(div().text_size(px(11.)).text_color(t.faint).child(tr("Command line. {file} is replaced by the file path; leave empty to use the system default app."))),
+        )
     }
 
     pub fn render_connection(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

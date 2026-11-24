@@ -20,7 +20,7 @@ use crate::core::remote::{list_local, sort_entries};
 use crate::core::{Core, Direction, JobState, Session};
 use crate::i18n::{tr, trf};
 
-actions!(workspace, [DeleteSelected, OpenSelected, GoUp, Refresh, RenameSelected, SelectAllRows, Dismiss, NewFolder, EditPath]);
+actions!(workspace, [DeleteSelected, OpenSelected, GoUp, Refresh, RenameSelected, SelectAllRows, Dismiss, NewFolder, EditPath, EditFile]);
 
 pub fn bind_keys(cx: &mut App) {
     let ctx = Some("FilePane");
@@ -31,6 +31,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("f5", Refresh, None),
         KeyBinding::new("f2", RenameSelected, ctx),
         KeyBinding::new("f7", NewFolder, ctx),
+        KeyBinding::new("f4", EditFile, ctx),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-a", SelectAllRows, ctx),
         #[cfg(not(target_os = "macos"))]
@@ -160,6 +161,8 @@ pub struct ContextMenu {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DrawerTab {
     Active,
+    Queue,
+    Editing,
     Done,
     Failed,
     Log,
@@ -197,6 +200,7 @@ pub struct Workspace {
     pub path_edit: Option<PathEdit>,
     pub last_side: Side,
     pub update: super::updates::UpdateState,
+    pub edits: Vec<super::edit::EditWatch>,
     last_version: u64,
     seen_jobs: HashSet<u64>,
     last_log: Option<chrono::DateTime<chrono::Local>>,
@@ -244,6 +248,7 @@ impl Workspace {
             path_edit: None,
             last_side: Side::Local,
             update: super::updates::UpdateState::Idle,
+            edits: vec![],
             last_version: 0,
             seen_jobs: HashSet::new(),
             last_log: None,
@@ -256,10 +261,14 @@ impl Workspace {
             ws.check_for_updates(false, cx);
         }
         // Poll the shared core for changes made by transfers or MCP agents.
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(200)).await;
-                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
+                let alive = this.update_in(cx, |this, window, cx| {
+                    this.poll(cx);
+                    this.poll_edits(window, cx);
+                });
+                if alive.is_err() {
                     break;
                 }
             }
@@ -628,6 +637,15 @@ impl Workspace {
 
     /// Send paths from `from` side to the other side. `into` overrides the target directory.
     pub fn transfer(&mut self, from: Side, paths: Vec<String>, into: Option<String>, cx: &mut Context<Self>) {
+        self.transfer_with(from, paths, into, false, cx);
+    }
+
+    /// Add to the transfer queue without starting (FileZilla's "Add to queue").
+    pub fn enqueue(&mut self, from: Side, paths: Vec<String>, cx: &mut Context<Self>) {
+        self.transfer_with(from, paths, None, true, cx);
+    }
+
+    fn transfer_with(&mut self, from: Side, paths: Vec<String>, into: Option<String>, queue_only: bool, cx: &mut Context<Self>) {
         if paths.is_empty() {
             return;
         }
@@ -637,7 +655,11 @@ impl Workspace {
         };
         let core = self.core.clone();
         let n = paths.len();
-        if self.core.config.lock().interface.open_drawer_on_transfer {
+        if queue_only {
+            self.drawer_open = true;
+            self.drawer_tab = DrawerTab::Queue;
+            self.toast(trf("Added {n} item(s) to the queue", &[("n", &n.to_string())]), false);
+        } else if self.core.config.lock().interface.open_drawer_on_transfer {
             self.drawer_open = true;
             self.drawer_tab = DrawerTab::Active;
         }
@@ -645,7 +667,7 @@ impl Workspace {
             Side::Local => {
                 let dir = into.unwrap_or_else(|| self.pane(Side::Remote).map(|p| p.path.clone()).unwrap_or_default());
                 let locals = paths.into_iter().map(PathBuf::from).collect();
-                self.run(cx, async move { core.upload(&session, locals, &dir, Origin::User).await }, move |this, r, _| {
+                self.run(cx, async move { core.upload(&session, locals, &dir, Origin::User, queue_only).await }, move |this, r, _| {
                     if let Err(e) = r {
                         this.toast(trf("Upload failed: {error}", &[("error", &format!("{e:#}"))]), true);
                     } else if let Some(p) = this.pane_mut(Side::Local) {
@@ -656,7 +678,7 @@ impl Workspace {
             }
             Side::Remote => {
                 let dir = PathBuf::from(into.unwrap_or_else(|| self.local.path.clone()));
-                self.run(cx, async move { core.download(&session, paths, &dir, Origin::User).await }, move |this, r, _| {
+                self.run(cx, async move { core.download(&session, paths, &dir, Origin::User, queue_only).await }, move |this, r, _| {
                     if let Err(e) = r {
                         this.toast(trf("Download failed: {error}", &[("error", &format!("{e:#}"))]), true);
                     } else if let Some(p) = this.pane_mut(Side::Remote) {
@@ -958,6 +980,15 @@ impl Workspace {
         cx.notify();
     }
 
+    fn act_edit_file(&mut self, _: &EditFile, _: &mut Window, cx: &mut Context<Self>) {
+        let side = self.last_side;
+        if let [one] = self.targets(side, None).as_slice()
+            && !one.is_dir
+        {
+            self.view_edit(side, one.clone(), cx);
+        }
+    }
+
     fn act_edit_path(&mut self, _: &EditPath, window: &mut Window, cx: &mut Context<Self>) {
         self.start_path_edit(self.last_side, window, cx);
     }
@@ -1068,6 +1099,10 @@ impl Workspace {
                     Side::Local => (tr("Upload"), "arrow-right", 1),
                     Side::Remote => (tr("Download"), "arrow-left", 1),
                 });
+                items.push((tr("Add to queue"), "list-plus", 10));
+            }
+            if !e.is_dir {
+                items.push((tr("View / Edit"), "file-pen", 11));
             }
             items.push((tr("Rename"), "pencil", 2));
             if side == Side::Remote {
@@ -1158,6 +1193,15 @@ impl Workspace {
             6 => self.open_prompt(PromptKind::NewFolder, side, None, window, cx),
             9 => self.open_prompt(PromptKind::NewFile, side, None, window, cx),
             7 => self.refresh_all(cx),
+            10 => {
+                let paths = self.targets(side, name.as_deref()).into_iter().map(|e| e.path).collect();
+                self.enqueue(side, paths, cx);
+            }
+            11 => {
+                if let Some(e) = entry {
+                    self.view_edit(side, e, cx);
+                }
+            }
             8 => {
                 if let Some(e) = entry {
                     cx.reveal_path(std::path::Path::new(&e.path));
@@ -1307,6 +1351,7 @@ impl Render for Workspace {
                     .on_action(cx.listener(Self::act_select_all))
                     .on_action(cx.listener(Self::act_dismiss))
                     .on_action(cx.listener(Self::act_edit_path))
+                    .on_action(cx.listener(Self::act_edit_file))
                     .flex()
                     .flex_1()
                     .min_h_0()

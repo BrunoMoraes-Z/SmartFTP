@@ -21,11 +21,21 @@ pub enum SettingsTab {
 pub struct SettingsState {
     pub tab: SettingsTab,
     pub show_token: bool,
+    pub editor_input: gpui::Entity<super::input::TextInput>,
+    _subs: Vec<gpui::Subscription>,
 }
 
 impl SettingsState {
-    pub fn new(_core: &Arc<Core>, _window: &mut Window, _cx: &mut Context<Workspace>) -> Self {
-        SettingsState { tab: SettingsTab::General, show_token: false }
+    pub fn new(core: &Arc<Core>, window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let current = core.config.lock().interface.editor.clone();
+        let editor_input = cx.new(|cx| super::input::TextInput::new(cx, "\"C:\\Path\\editor.exe\" \"{file}\"").mono().with_text(current));
+        let sub = cx.subscribe_in(&editor_input, window, |this, input, ev: &super::input::InputEvent, _, cx| {
+            if let super::input::InputEvent::Changed = ev {
+                let value = input.read(cx).text();
+                this.core.update_config(move |c| c.interface.editor = value);
+            }
+        });
+        SettingsState { tab: SettingsTab::General, show_token: false, editor_input, _subs: vec![sub] }
     }
 }
 

@@ -534,6 +534,13 @@ impl Workspace {
                     },
                 )))
                 .child(
+                    button(SharedString::from(format!("queue-{tag}")), tr("Add to queue"), Some("list-plus"), BtnKind::Outline, cx)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let paths = this.targets(side, None).into_iter().map(|e| e.path).collect();
+                            this.enqueue(side, paths, cx);
+                        })),
+                )
+                .child(
                     button(
                         SharedString::from(format!("send-{tag}")),
                         label,
@@ -645,7 +652,9 @@ impl Workspace {
     pub fn render_drawer(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let jobs = self.core.jobs();
-        let active: Vec<_> = jobs.iter().filter(|j| !j.state.lock().finished()).cloned().collect();
+        let active: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Queued | JobState::Running)).cloned().collect();
+        let queued: Vec<_> = jobs.iter().filter(|j| *j.state.lock() == JobState::Pending).cloned().collect();
+        let editing = self.edits.len();
         let done: Vec<_> =
             jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Done | JobState::Cancelled | JobState::Skipped)).cloned().collect();
         let failed: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Failed(_))).cloned().collect();
@@ -697,6 +706,8 @@ impl Workspace {
                     })),
             )
             .child(tab_btn(trf("Active {n}", &[("n", &active.len().to_string())]), DrawerTab::Active, cx))
+            .child(tab_btn(trf("Queue {n}", &[("n", &queued.len().to_string())]), DrawerTab::Queue, cx))
+            .when(editing > 0, |d| d.child(tab_btn(trf("Editing {n}", &[("n", &editing.to_string())]), DrawerTab::Editing, cx)))
             .child(tab_btn(trf("Done {n}", &[("n", &done.len().to_string())]), DrawerTab::Done, cx))
             .child(tab_btn(trf("Failed {n}", &[("n", &failed.len().to_string())]), DrawerTab::Failed, cx))
             .child(tab_btn(tr("Activity").into(), DrawerTab::Log, cx))
@@ -715,6 +726,26 @@ impl Workspace {
                     .text_color(if down > 0. { t.ink } else { t.faint })
                     .child(format!("↓ {}/s", human_size(down as u64))),
             )
+            .when(!queued.is_empty(), |d| {
+                d.child(button("clear-queue", tr("Clear queue"), None, BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
+                    this.core.clear_queue();
+                    cx.notify();
+                })))
+                .child(
+                    button(
+                        "process-queue",
+                        trf("Process queue ({n})", &[("n", &queued.len().to_string())]),
+                        Some("play"),
+                        BtnKind::Primary,
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.core.process_queue(None);
+                        this.drawer_tab = DrawerTab::Active;
+                        cx.notify();
+                    })),
+                )
+            })
             .child(button("clear-done", tr("Clear finished"), None, BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
                 this.core.clear_finished_jobs();
                 cx.notify();
@@ -722,6 +753,69 @@ impl Workspace {
 
         let body = if !open {
             None
+        } else if tab == DrawerTab::Editing {
+            Some(
+                div()
+                    .id("drawer-edits")
+                    .h(px(170.))
+                    .overflow_y_scroll()
+                    .px(px(14.))
+                    .pb(px(8.))
+                    .when(self.edits.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .py(px(12.))
+                                .text_size(px(12.))
+                                .text_color(t.faint)
+                                .child(tr("No files are being edited. Right-click a remote file and choose View / Edit (F4).")),
+                        )
+                    })
+                    .children(self.edits.iter().map(|w| {
+                        let id = w.id;
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .h(px(34.))
+                            .text_size(px(12.))
+                            .child(icon("file-pen", 13., t.signal))
+                            .child(div().flex_none().font_weight(FontWeight::MEDIUM).child(w.name()))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(11.))
+                                    .text_color(t.faint)
+                                    .font_family(super::MONO_FONT)
+                                    .child(format!("{}:{}", w.site_name, w.remote)),
+                            )
+                            .when(w.uploads > 0, |d| {
+                                d.child(
+                                    div().text_size(px(11.)).text_color(t.ok).child(trf("uploaded {n}×", &[("n", &w.uploads.to_string())])),
+                                )
+                            })
+                            .child(
+                                button(SharedString::from(format!("edit-open-{id}")), tr("Open"), Some("file-pen"), BtnKind::Ghost, cx)
+                                    .on_click(cx.listener(move |this, _, _, cx| this.reopen_edit(id, cx))),
+                            )
+                            .child(
+                                button(
+                                    SharedString::from(format!("edit-up-{id}")),
+                                    tr("Upload now"),
+                                    Some("arrow-up"),
+                                    BtnKind::Outline,
+                                    cx,
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| this.upload_edit(id, cx))),
+                            )
+                            .child(
+                                icon_button(SharedString::from(format!("edit-stop-{id}")), "x", cx)
+                                    .tooltip(tip(tr("Stop editing")))
+                                    .on_click(cx.listener(move |this, _, _, cx| this.stop_edit(id, cx))),
+                            )
+                    })),
+            )
         } else if tab == DrawerTab::Log {
             let log = self.core.log_entries();
             Some(
@@ -775,6 +869,7 @@ impl Workspace {
         } else {
             let list = match tab {
                 DrawerTab::Active => active,
+                DrawerTab::Queue => queued,
                 DrawerTab::Done => done,
                 _ => failed,
             };
@@ -789,6 +884,9 @@ impl Workspace {
                         d.child(div().py(px(12.)).text_size(px(12.)).text_color(t.faint).child(match tab {
                             DrawerTab::Active => tr("No active transfers. Select files and press → or ←, or drag them across."),
                             DrawerTab::Done => tr("Finished transfers show up here."),
+                            DrawerTab::Queue => {
+                                tr("The queue is empty. Right-click files and choose Add to queue, then Process queue to start them.")
+                            }
                             _ => tr("No failures."),
                         }))
                     })
@@ -846,6 +944,7 @@ impl Workspace {
                                     .child(div().text_size(px(11.)).text_color(t.muted).font_family(super::MONO_FONT).child(match &st {
                                         JobState::Running => format!("{}/s", human_size(j.speed() as u64)),
                                         JobState::Queued => tr("queued").into(),
+                                        JobState::Pending => tr("in queue").into(),
                                         JobState::Done => human_size(j.total.max(j.done_bytes())),
                                         JobState::Cancelled => tr("cancelled").into(),
                                         JobState::Skipped => tr("skipped (already exists)").into(),
@@ -872,12 +971,28 @@ impl Workspace {
                                         JobState::Done | JobState::Skipped => {
                                             icon_button(SharedString::from(format!("ok-{id}")), "check", cx)
                                         }
+                                        JobState::Pending => icon_button(SharedString::from(format!("start-{id}")), "play", cx)
+                                            .tooltip(tip(tr("Start now")))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.core.process_queue(Some(&[id]));
+                                                cx.notify();
+                                            })),
                                         _ => icon_button(SharedString::from(format!("cancel-{id}")), "x", cx).on_click(cx.listener(
                                             move |this, _, _, cx| {
                                                 this.core.cancel_job(id);
                                                 cx.notify();
                                             },
                                         )),
+                                    })
+                                    .when(st == JobState::Pending, |d| {
+                                        d.child(
+                                            icon_button(SharedString::from(format!("remove-{id}")), "x", cx)
+                                                .tooltip(tip(tr("Remove from queue")))
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.core.remove_jobs(&[id]);
+                                                    cx.notify();
+                                                })),
+                                        )
                                     }),
                             )
                             .child(div().w_full().h(px(2.)).bg(t.border).child(div().h_full().w(relative(frac)).bg(bar_color)))

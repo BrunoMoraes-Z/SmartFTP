@@ -144,6 +144,8 @@ pub struct InterfaceSettings {
     pub language: String,
     /// Look for a newer GitHub release at startup.
     pub check_updates: bool,
+    /// Command used by "View / Edit". `{file}` is replaced by the path; empty = system default app.
+    pub editor: String,
 }
 
 impl Default for InterfaceSettings {
@@ -155,6 +157,7 @@ impl Default for InterfaceSettings {
             open_drawer_on_transfer: true,
             language: "auto".into(),
             check_updates: true,
+            editor: String::new(),
         }
     }
 }

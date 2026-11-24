@@ -17,7 +17,9 @@ A desktop FTP / FTPS / SFTP client written in Rust with [GPUI](https://www.gpui.
 
 - **FTP, FTPS and SFTP** with password or private-key login, and host keys pinned on first use.
 - **Two panes, local and remote.** Send files with the → / ← button on a row, a double-click, or drag and drop, including straight from Explorer.
-- **AI agents over MCP.** 17 tools to connect, browse, upload, download, read and write files. What an agent does shows up live in the window.
+- **Transfer queue like FileZilla's.** Add files to the queue and start them all, or one by one, when you are ready.
+- **View / Edit.** Open a remote file in VS Code or any editor; when you save, SmartFTP offers to upload it and replace the original.
+- **AI agents over MCP.** 18 tools to connect, browse, upload, download, read and write files. What an agent does shows up live in the window.
 - **A connection rail like Discord's.** Sites are tiles with your own icon and color; drop one onto another to make a folder.
 - **FileZilla-style settings**: timeouts, retries, reconnect, FTP modes, speed limits, simultaneous transfers and what to do when a file exists.
 - **Themes and languages.** Six built-in themes plus your own TOML files; English, Brazilian Portuguese and Spanish.
@@ -51,11 +53,11 @@ Then ask in plain language, for example *"upload ./dist to the staging site and 
 | Connections | `list_sites`, `list_sessions`, `connect`, `disconnect` |
 | Browsing | `list_dir`, `change_dir` |
 | Remote files | `make_dir`, `delete`, `rename`, `chmod`, `read_file`, `write_file` |
-| Transfers | `upload`, `download`, `list_transfers`, `cancel_transfer` |
+| Transfers | `upload`, `download`, `process_queue`, `list_transfers`, `cancel_transfer` |
 | Local | `list_local_dir` |
 
 - `connect` takes a saved site or a URL such as `sftp://user@host/path`, and can save it as a new site.
-- `upload` and `download` are recursive. By default they wait for completion and return a result per file.
+- `upload` and `download` are recursive. By default they wait for completion and return a result per file. With `queue_only` they only add the transfers to the queue; `process_queue` starts them.
 - `delete` needs `recursive` for non-empty folders.
 
 You stay in control:
@@ -86,7 +88,13 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
   - dragging between the panes, or onto a specific folder.
 - **Path bar**: click a breadcrumb to jump to it. Click the empty part of the bar, or press `Ctrl+L`, to type a path. Remote paths can be relative and `..` works. The local pane also has a folder picker.
 - **Compare badges** (`▲ newer`, `older`, `only here`) show how the two sides differ. Timestamps are kept on upload and download, so the badges stay meaningful.
-- **Transfer queue**: progress, speed, cancel and retry. The **Activity** tab shows who did what, you or an agent.
+- **Transfers**: progress, speed, cancel and retry. The **Activity** tab shows who did what, you or an agent.
+- **Queue**: choose **Add to queue**, from the right-click menu or the selection bar, to line transfers up without starting them. The **Queue** tab lists them. **Process queue** starts them all; ▶ starts a single one and ✕ removes it.
+- **View / Edit** (`F4`, or right-click a file):
+  - remote files are downloaded to a temporary folder and opened in your editor;
+  - whenever you save, SmartFTP asks whether to upload the file and replace the one on the server;
+  - the **Editing** tab lists the files you have open, with **Upload now** and **Stop editing**;
+  - pick the editor in **Settings → General → File editor**: the system default, a detected editor (VS Code, Cursor, Notepad++, Sublime Text, Notepad) or any program. `{file}` in the command is replaced by the path.
 
 | Key | Action |
 |---|---|
@@ -95,6 +103,7 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
 | `Ctrl+L` | Type a path |
 | `F5` | Refresh |
 | `F2` | Rename |
+| `F4` | View / Edit |
 | `F7` | New folder |
 | `Delete` | Delete |
 | `Ctrl+A` | Select all |
@@ -104,6 +113,7 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
 
 - **General**:
   - language;
+  - file editor for View / Edit;
   - updates;
   - hidden files;
   - double-click action;

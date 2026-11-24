@@ -10,6 +10,9 @@ use crate::core::config::{ThemeMode, new_token, themes_dir};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
+    General,
+    Connection,
+    Transfers,
     Appearance,
     Mcp,
 }
@@ -21,7 +24,7 @@ pub struct SettingsState {
 
 impl SettingsState {
     pub fn new(_core: &Arc<Core>, _window: &mut Window, _cx: &mut Context<Workspace>) -> Self {
-        SettingsState { tab: SettingsTab::Appearance, show_token: false }
+        SettingsState { tab: SettingsTab::General, show_token: false }
     }
 }
 
@@ -106,6 +109,9 @@ impl Workspace {
                 }))
         };
         let content = match tab {
+            SettingsTab::General => self.render_general(cx).into_any_element(),
+            SettingsTab::Connection => self.render_connection(cx).into_any_element(),
+            SettingsTab::Transfers => self.render_transfers(cx).into_any_element(),
             SettingsTab::Appearance => self.render_appearance(cx).into_any_element(),
             SettingsTab::Mcp => self.render_mcp(cx).into_any_element(),
         };
@@ -140,6 +146,9 @@ impl Workspace {
                                 cx.notify();
                             })),
                     )
+                    .child(nav_item("General", "sliders-horizontal", SettingsTab::General, cx))
+                    .child(nav_item("Connection", "plug", SettingsTab::Connection, cx))
+                    .child(nav_item("Transfers", "arrow-up-down", SettingsTab::Transfers, cx))
                     .child(nav_item("Appearance", "palette", SettingsTab::Appearance, cx))
                     .child(nav_item("MCP & Agents", "bot", SettingsTab::Mcp, cx)),
             )

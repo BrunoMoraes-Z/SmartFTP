@@ -168,6 +168,7 @@ impl Workspace {
 
         // ---------- path bar
         let crumbs = breadcrumbs(side, &path);
+        let editing = self.path_edit.as_ref().filter(|e| e.side == side).map(|e| e.input.clone());
         let crumb_count = crumbs.len();
         let path_bar = div()
             .flex()
@@ -188,8 +189,18 @@ impl Workspace {
                     .child(div().w(px(3.)).h(px(18.)).rounded(px(2.)).bg(site_col))
                     .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(site_col).child(site_name)),
             })
-            .child(
-                div()
+            .child(match editing {
+                Some(input) => div()
+                    .id(SharedString::from(format!("path-edit-{tag}")))
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.path_edit = None;
+                        cx.notify();
+                    }))
+                    .child(input),
+                None => div()
                     .id(SharedString::from(format!("crumbs-{tag}")))
                     .flex()
                     .flex_1()
@@ -200,6 +211,9 @@ impl Workspace {
                     .px(px(8.))
                     .rounded(px(5.))
                     .bg(t.surface)
+                    .cursor_text()
+                    .tooltip(tip("Click to type a path (Ctrl+L)"))
+                    .on_click(cx.listener(move |this, _, window, cx| this.start_path_edit(side, window, cx)))
                     .overflow_x_scroll()
                     .font_family(super::MONO_FONT)
                     .text_size(px(12.))
@@ -219,10 +233,20 @@ impl Workspace {
                                     .text_color(if last { t.ink } else { t.muted })
                                     .hover(|d| d.bg(t.hover))
                                     .child(label)
-                                    .on_click(cx.listener(move |this, _, _, cx| this.navigate(side, target.clone(), cx))),
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.navigate(side, target.clone(), cx)
+                                    })),
                             )
                     })),
-            )
+            })
+            .when(side == Side::Local, |d| {
+                d.child(
+                    icon_button("browse-local", "folder-open", cx)
+                        .tooltip(tip("Choose a folder…"))
+                        .on_click(cx.listener(|this, _, window, cx| this.browse_local_folder(window, cx))),
+                )
+            })
             .child(icon_button(SharedString::from(format!("up-{tag}")), "arrow-up", cx).tooltip(tip("Parent folder (Backspace)")).on_click(cx.listener(move |this, _, _, cx| this.go_up(side, cx))))
             .child(
                 icon_button(SharedString::from(format!("refresh-{tag}")), "rotate-cw", cx).tooltip(tip("Refresh (F5)")).on_click(cx.listener(move |this, _, _, cx| match side {
@@ -535,7 +559,7 @@ impl Workspace {
         let t = theme(cx).clone();
         let jobs = self.core.jobs();
         let active: Vec<_> = jobs.iter().filter(|j| !j.state.lock().finished()).cloned().collect();
-        let done: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Done | JobState::Cancelled)).cloned().collect();
+        let done: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Done | JobState::Cancelled | JobState::Skipped)).cloned().collect();
         let failed: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Failed(_))).cloned().collect();
         let running = |d: Direction| -> f64 { jobs.iter().filter(|j| j.direction == d && matches!(*j.state.lock(), JobState::Running)).map(|j| j.speed()).sum() };
         let (up, down) = (running(Direction::Upload), running(Direction::Download));
@@ -683,6 +707,7 @@ impl Workspace {
                                         JobState::Queued => "queued".into(),
                                         JobState::Done => human_size(j.total.max(j.done_bytes())),
                                         JobState::Cancelled => "cancelled".into(),
+                                        JobState::Skipped => "skipped (already exists)".into(),
                                         JobState::Failed(e) => shorten(e, 60),
                                     }))
                                     .child(div().w(px(36.)).text_right().text_size(px(11.)).font_family(super::MONO_FONT).child(format!("{:.0}%", frac * 100.)))
@@ -692,7 +717,7 @@ impl Workspace {
                                             this.drawer_tab = DrawerTab::Active;
                                             cx.notify();
                                         })),
-                                        JobState::Done => icon_button(SharedString::from(format!("ok-{id}")), "check", cx),
+                                        JobState::Done | JobState::Skipped => icon_button(SharedString::from(format!("ok-{id}")), "check", cx),
                                         _ => icon_button(SharedString::from(format!("cancel-{id}")), "x", cx).on_click(cx.listener(move |this, _, _, cx| {
                                             this.core.cancel_job(id);
                                             cx.notify();

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use gpui::{
-    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, MouseButton, MouseDownEvent,
+    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
     Pixels, Point, PromptLevel, SharedString, Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
 };
 
@@ -19,7 +19,7 @@ use crate::core::model::{Entry, Origin, Site, join_remote, parent_remote};
 use crate::core::remote::{list_local, sort_entries};
 use crate::core::{Core, Direction, JobState, Session};
 
-actions!(workspace, [DeleteSelected, OpenSelected, GoUp, Refresh, RenameSelected, SelectAllRows, Dismiss, NewFolder, ToggleSidebar]);
+actions!(workspace, [DeleteSelected, OpenSelected, GoUp, Refresh, RenameSelected, SelectAllRows, Dismiss, NewFolder, EditPath]);
 
 pub fn bind_keys(cx: &mut App) {
     let ctx = Some("FilePane");
@@ -35,9 +35,9 @@ pub fn bind_keys(cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-a", SelectAllRows, ctx),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        KeyBinding::new("cmd-l", EditPath, ctx),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-b", ToggleSidebar, None),
+        KeyBinding::new("ctrl-l", EditPath, ctx),
         KeyBinding::new("escape", Dismiss, Some("Workspace")),
     ]);
 }
@@ -186,7 +186,6 @@ pub struct Workspace {
     pub active: Option<String>,
     pub local: Pane,
     pub remotes: HashMap<String, Pane>,
-    pub quick: Entity<TextInput>,
     pub drawer_open: bool,
     pub drawer_tab: DrawerTab,
     pub connecting: HashSet<String>,
@@ -195,7 +194,8 @@ pub struct Workspace {
     pub menu: Option<ContextMenu>,
     pub view: View,
     pub settings: SettingsState,
-    pub collapsed_groups: HashSet<String>,
+    pub rail_menu: Option<super::rail::RailMenu>,
+    pub path_edit: Option<PathEdit>,
     pub last_side: Side,
     last_version: u64,
     seen_jobs: HashSet<u64>,
@@ -214,14 +214,7 @@ impl Workspace {
             .filter(|p| std::path::Path::new(p).is_dir())
             .or_else(|| dirs::home_dir().map(|p| p.to_string_lossy().to_string()))
             .unwrap_or_else(|| "/".into());
-        let quick = cx.new(|cx| TextInput::new(cx, "sftp://user@host").mono());
         let mut subs = vec![];
-        subs.push(cx.subscribe_in(&quick, window, |this, input, ev: &InputEvent, window, cx| {
-            if let InputEvent::Submit = ev {
-                let url = input.read(cx).text();
-                this.quick_connect(&url, window, cx);
-            }
-        }));
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
             let a = appearance_of(window.appearance());
             let core_cfg = cx.global::<Themes>().os_appearance;
@@ -239,7 +232,6 @@ impl Workspace {
             active: None,
             local: Pane::new(start_local),
             remotes: HashMap::new(),
-            quick,
             drawer_open: true,
             drawer_tab: DrawerTab::Active,
             connecting: HashSet::new(),
@@ -248,7 +240,8 @@ impl Workspace {
             menu: None,
             view: View::Main,
             settings,
-            collapsed_groups: HashSet::new(),
+            rail_menu: None,
+            path_edit: None,
             last_side: Side::Local,
             last_version: 0,
             seen_jobs: HashSet::new(),
@@ -256,6 +249,7 @@ impl Workspace {
             known_sessions: HashSet::new(),
             _subs: subs,
         };
+        ws.local.show_hidden = ws.core.config.lock().interface.show_hidden;
         ws.load_local(cx);
         // Poll the shared core for changes made by transfers or MCP agents.
         cx.spawn(async move |this, cx| {
@@ -518,7 +512,9 @@ impl Workspace {
         self.view = View::Main;
         if !self.remotes.contains_key(id) {
             let cwd = session.cwd.lock().clone();
-            self.remotes.insert(id.to_string(), Pane::new(cwd));
+            let mut pane = Pane::new(cwd);
+            pane.show_hidden = self.core.config.lock().interface.show_hidden;
+            self.remotes.insert(id.to_string(), pane);
             self.load_remote(id, cx);
             if !session.site.local_dir.is_empty() && std::path::Path::new(&session.site.local_dir).is_dir() {
                 self.navigate(Side::Local, session.site.local_dir.clone(), cx);
@@ -551,12 +547,9 @@ impl Workspace {
         cx.notify();
     }
 
-    fn quick_connect(&mut self, url: &str, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn quick_connect(&mut self, url: &str, cx: &mut Context<Self>) {
         match Site::from_url(url) {
-            Some(site) => {
-                self.quick.update(cx, |i, cx| i.set_text("", cx));
-                self.connect_site(site, cx);
-            }
+            Some(site) => self.connect_site(site, cx),
             None => self.toast("Use a URL like sftp://user:password@host:22/path", true),
         }
     }
@@ -611,8 +604,10 @@ impl Workspace {
         let Some(e) = pane.entries.iter().find(|e| e.name == name).cloned() else { return };
         if e.is_dir {
             self.navigate(side, e.path, cx);
-        } else {
+        } else if self.core.config.lock().interface.double_click_transfers {
             self.transfer(side, vec![e.path], None, cx);
+        } else if side == Side::Local {
+            cx.open_with_system(std::path::Path::new(&e.path));
         }
     }
 
@@ -638,8 +633,10 @@ impl Workspace {
         };
         let core = self.core.clone();
         let n = paths.len();
-        self.drawer_open = true;
-        self.drawer_tab = DrawerTab::Active;
+        if self.core.config.lock().interface.open_drawer_on_transfer {
+            self.drawer_open = true;
+            self.drawer_tab = DrawerTab::Active;
+        }
         match from {
             Side::Local => {
                 let dir = into.unwrap_or_else(|| self.pane(Side::Remote).map(|p| p.path.clone()).unwrap_or_default());
@@ -671,6 +668,10 @@ impl Workspace {
 
     pub fn delete_entries(&mut self, side: Side, entries: Vec<Entry>, window: &mut Window, cx: &mut Context<Self>) {
         if entries.is_empty() {
+            return;
+        }
+        if !self.core.config.lock().interface.confirm_delete {
+            self.do_delete(side, entries, cx);
             return;
         }
         let what = if entries.len() == 1 { format!("\"{}\"", entries[0].name) } else { format!("{} items", entries.len()) };
@@ -737,13 +738,27 @@ impl Workspace {
             (PromptKind::Chmod, Some(e)) => e.permissions.as_deref().map(perm_to_octal).unwrap_or_else(|| "644".into()),
             _ => String::new(),
         };
+        self.open_prompt_with(kind, side, target, initial, String::new(), window, cx);
+    }
+
+    pub fn open_folder_rename(&mut self, folder_id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_prompt_with(PromptKind::RenameFolder, Side::Remote, None, name, folder_id, window, cx);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_prompt_with(&mut self, kind: PromptKind, side: Side, target: Option<Entry>, initial: String, extra: String, window: &mut Window, cx: &mut Context<Self>) {
         let placeholder = match kind {
             PromptKind::NewFolder => "Folder name",
             PromptKind::NewFile => "File name",
             PromptKind::Rename => "New name",
             PromptKind::Chmod => "Octal mode, e.g. 755",
+            PromptKind::QuickConnect => "sftp://user:password@host:22/path",
+            PromptKind::RenameFolder => "Folder name",
         };
-        let input = cx.new(|cx| TextInput::new(cx, placeholder).with_text(initial.clone()));
+        let input = cx.new(|cx| {
+            let i = TextInput::new(cx, placeholder).with_text(initial.clone());
+            if kind == PromptKind::QuickConnect { i.mono() } else { i }
+        });
         if matches!(kind, PromptKind::Rename) {
             input.update(cx, |i, cx| i.select_stem(cx));
         } else {
@@ -758,7 +773,7 @@ impl Workspace {
             InputEvent::Changed => {}
         });
         window.focus(&input.focus_handle(cx));
-        self.modal = Some(Modal::Prompt(PromptState { kind, side, target, input, _sub: sub }));
+        self.modal = Some(Modal::Prompt(PromptState { kind, side, target, extra, input, _sub: sub }));
         self.menu = None;
         cx.notify();
     }
@@ -768,6 +783,24 @@ impl Workspace {
         let value = p.input.read(cx).text().trim().to_string();
         if value.is_empty() {
             return;
+        }
+        match p.kind {
+            PromptKind::QuickConnect => {
+                self.quick_connect(&value, cx);
+                return;
+            }
+            PromptKind::RenameFolder => {
+                let id = p.extra.clone();
+                self.core.update_config(|c| {
+                    if let Some((name, _, _)) = c.folder_mut(&id) {
+                        *name = value;
+                    }
+                    c.sync_rail();
+                });
+                cx.notify();
+                return;
+            }
+            _ => {}
         }
         let side = p.side;
         let dir = self.pane(side).map(|p| p.path.clone()).unwrap_or_default();
@@ -848,11 +881,6 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.core.update_config(|c| c.sidebar_collapsed = !c.sidebar_collapsed);
-        cx.notify();
-    }
-
     // ------------------------------------------------------------ actions
 
     fn act_delete(&mut self, _: &DeleteSelected, window: &mut Window, cx: &mut Context<Self>) {
@@ -902,327 +930,97 @@ impl Workspace {
     }
 
     fn act_dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.take().is_none() && self.modal.take().is_none() && self.view == View::Settings {
+        if self.menu.take().is_none() && self.rail_menu.take().is_none() && self.path_edit.take().is_none() && self.modal.take().is_none() && self.view == View::Settings {
             self.view = View::Main;
         }
         cx.notify();
     }
 
-    fn act_toggle_sidebar(&mut self, _: &ToggleSidebar, _: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_sidebar(cx);
+    fn act_edit_path(&mut self, _: &EditPath, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_path_edit(self.last_side, window, cx);
     }
 
-    // ------------------------------------------------------------ render: sidebar
+    // ------------------------------------------------------------ path editing
 
-    fn render_rail(&mut self, collapsed: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let t = theme(cx).clone();
-        let sessions = self.core.sessions();
-        let jobs = self.core.jobs();
-        let mcp_on = self.core.config.lock().mcp.enabled;
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .flex_none()
-            .w(px(56.))
-            .h_full()
-            .py(px(12.))
-            .gap(px(8.))
-            .bg(t.surface)
-            .border_r_1()
-            .border_color(t.border)
-            .child(
-                div()
-                    .id("app-mark")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(34.))
-                    .rounded(px(7.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .tooltip(super::panes::tip("Toggle sidebar (Ctrl+B)"))
-                    .child(gpui::img(super::titlebar::app_icon()).size(px(26.)))
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-            )
-            .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-            .children(sessions.iter().map(|s| {
-                let (ic, col) = self.identity(&s.site);
-                let color = site_color(&col);
-                let active = self.active.as_deref() == Some(s.id.as_str());
-                let busy = jobs.iter().any(|j| j.session_id == s.id && matches!(*j.state.lock(), JobState::Running | JobState::Queued));
-                let id = s.id.clone();
-                let site_id = s.site.id.clone();
-                let name: SharedString = s.site.name.clone().into();
-                div()
-                    .id(SharedString::from(format!("rail-{}", s.id)))
-                    .relative()
-                    .w(px(56.))
-                    .h(px(40.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .when(active, |d| d.child(div().absolute().left_0().top(px(8.)).w(px(3.)).h(px(24.)).rounded_r(px(2.)).bg(t.ink)))
-                    .child(tile(&ic, color, 34.))
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(38.))
-                            .top(px(28.))
-                            .size(px(10.))
-                            .rounded(px(5.))
-                            .border_2()
-                            .border_color(t.surface)
-                            .bg(if busy { t.warn } else { t.ok }),
-                    )
-                    .when(s.origin.is_agent(), |d| {
-                        d.child(div().absolute().left(px(8.)).top(px(0.)).child(icon("bot", 12., t.signal)))
-                    })
-                    .tooltip(move |_, cx| cx.new(|_| Tip(name.clone())).into())
-                    .on_click(cx.listener(move |this, _, _, cx| this.activate(&id, cx)))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, ev: &MouseDownEvent, _, cx| this.open_icon_picker(site_id.clone(), ev.position, cx)),
-                    )
-            }))
-            .child(
-                div()
-                    .id("rail-new")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(34.))
-                    .rounded(px(7.))
-                    .border_1()
-                    .border_color(t.border)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child(icon("plus", 15., t.muted))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))),
-            )
-            .child(div().flex_1())
-            .when(collapsed, |d| {
-                d.child(icon_button("rail-expand", "panel-left-open", cx).on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))))
-            })
-            .child(
-                div()
-                    .id("rail-mcp")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(34.))
-                    .rounded(px(7.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child(icon("bot", 18., t.muted))
-                    .child(div().absolute().top(px(5.)).right(px(5.)).size(px(7.)).rounded(px(4.)).bg(if mcp_on { t.ok } else { t.faint }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.settings.tab = super::settings::SettingsTab::Mcp;
-                        this.view = View::Settings;
-                        cx.notify();
-                    })),
-            )
-            .child(icon_button("rail-settings", "settings", cx).on_click(cx.listener(|this, _, _, cx| {
-                this.view = if this.view == View::Settings { View::Main } else { View::Settings };
-                cx.notify();
-            })))
-    }
-
-    fn render_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let t = theme(cx).clone();
-        let sessions = self.core.sessions();
-        let sites = self.core.config.lock().sites.clone();
-        let jobs = self.core.jobs();
-
-        let mut groups: Vec<(String, Vec<Site>)> = vec![];
-        for s in sites {
-            let g = if s.group.trim().is_empty() { "Sites".to_string() } else { s.group.clone() };
-            match groups.iter_mut().find(|(n, _)| *n == g) {
-                Some((_, v)) => v.push(s),
-                None => groups.push((g, vec![s])),
+    /// Turn a pane's breadcrumb bar into a text field with the current path.
+    pub fn start_path_edit(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.pane(side).map(|p| p.path.clone()) else { return };
+        let input = cx.new(|cx| TextInput::new(cx, if side == Side::Local { "Folder on this computer" } else { "/remote/path" }).mono().with_text(path));
+        input.update(cx, |i, cx| i.select_all_text(cx));
+        let sub = cx.subscribe_in(&input, window, move |this, input, ev: &InputEvent, _, cx| match ev {
+            InputEvent::Submit => {
+                let value = input.read(cx).text();
+                this.path_edit = None;
+                this.go_to_path(side, value.trim(), cx);
             }
+            InputEvent::Cancel => {
+                this.path_edit = None;
+                cx.notify();
+            }
+            InputEvent::Changed => {}
+        });
+        window.focus(&input.focus_handle(cx));
+        self.path_edit = Some(PathEdit { side, input, _sub: sub });
+        cx.notify();
+    }
+
+    /// Navigate to a typed path. Local paths accept `~`; remote paths may be relative.
+    pub fn go_to_path(&mut self, side: Side, value: &str, cx: &mut Context<Self>) {
+        if value.is_empty() {
+            return;
         }
-
-        let header = |title: &str, count: usize, collapsed: bool, id: String, cx: &mut Context<Self>| {
-            let key = title.to_string();
-            div()
-                .id(SharedString::from(id))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .px(px(6.))
-                .pb(px(6.))
-                .cursor_pointer()
-                .child(icon(if collapsed { "chevron-right" } else { "chevron-down" }, 12., t.faint))
-                .child(div().flex_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(t.muted).child(key.clone()))
-                .child(div().text_size(px(11.)).text_color(t.faint).child(count.to_string()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if !this.collapsed_groups.remove(&key) {
-                        this.collapsed_groups.insert(key.clone());
+        match side {
+            Side::Local => {
+                let path = crate::core::sftp::expand_tilde(value);
+                let p = std::path::Path::new(&path);
+                if p.is_dir() {
+                    self.navigate(Side::Local, path, cx);
+                } else if p.is_file() {
+                    // a file path: open its folder and select the file
+                    if let (Some(dir), Some(name)) = (p.parent(), p.file_name()) {
+                        let name = name.to_string_lossy().to_string();
+                        self.navigate(Side::Local, dir.to_string_lossy().to_string(), cx);
+                        self.local.selected = HashSet::from([name.clone()]);
+                        self.local.anchor = Some(name);
                     }
-                    cx.notify();
-                }))
-        };
-
-        let open_collapsed = self.collapsed_groups.contains("Open now");
-        let mut list = div().flex().flex_col().gap(px(14.)).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .child(header("Open now", sessions.len(), open_collapsed, "grp-open".into(), cx))
-                .when(sessions.is_empty() && !open_collapsed, |d| {
-                    d.child(div().px(px(8.)).py(px(4.)).text_size(px(12.)).text_color(t.faint).child("No open sessions"))
-                })
-                .when(!open_collapsed, |d| {
-                    d.children(sessions.iter().map(|s| {
-                        let (ic, col) = self.identity(&s.site);
-                        let active = self.active.as_deref() == Some(s.id.as_str());
-                        let busy = jobs.iter().any(|j| j.session_id == s.id && matches!(*j.state.lock(), JobState::Running | JobState::Queued));
-                        let id = s.id.clone();
-                        let id2 = s.id.clone();
-                        let site_id = s.site.id.clone();
-                        let sub: SharedString = if s.origin.is_agent() { format!("opened by {}", s.origin.label()).into() } else { s.site.address().into() };
-                        div()
-                            .id(SharedString::from(format!("open-{}", s.id)))
-                            .group("open-row")
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .h(px(40.))
-                            .px(px(6.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .when(active, |d| d.bg(t.hover))
-                            .hover(|s| s.bg(t.hover))
-                            .child(tile(&ic, site_color(&col), 26.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .child(div().text_size(px(13.)).font_weight(if active { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM }).truncate().child(s.site.name.clone()))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(4.))
-                                            .text_size(px(11.))
-                                            .text_color(if s.origin.is_agent() { t.signal } else { t.faint })
-                                            .when(s.origin.is_agent(), |d| d.child(icon("bot", 11., t.signal)))
-                                            .child(div().truncate().child(sub)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("close-{}", s.id)))
-                                    .opacity(0.)
-                                    .group_hover("open-row", |s| s.opacity(1.))
-                                    .child(icon("x", 13., t.faint))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.disconnect(id2.clone(), cx);
-                                    })),
-                            )
-                            .child(div().size(px(7.)).rounded(px(4.)).bg(if busy { t.warn } else { t.ok }))
-                            .on_click(cx.listener(move |this, _, _, cx| this.activate(&id, cx)))
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(move |this, ev: &MouseDownEvent, _, cx| this.open_icon_picker(site_id.clone(), ev.position, cx)),
-                            )
-                    }))
-                }),
-        );
-
-        for (gname, sites) in groups {
-            let collapsed = self.collapsed_groups.contains(&gname);
-            let count = sites.len();
-            let mut g = div().flex().flex_col().gap(px(1.)).child(header(&gname, count, collapsed, format!("grp-{gname}"), cx));
-            if !collapsed {
-                for site in sites {
-                    let connecting = self.connecting.contains(&site.id);
-                    let color = site_color(&site.color);
-                    let s1 = site.clone();
-                    let s2 = site.clone();
-                    let site_id = site.id.clone();
-                    g = g.child(
-                        div()
-                            .id(SharedString::from(format!("site-{}", site.id)))
-                            .group("site-row")
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .h(px(40.))
-                            .px(px(6.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(t.hover))
-                            .child(tile(&site.icon, color, 26.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).truncate().child(site.name.clone()))
-                                    .child(div().text_size(px(11.)).text_color(t.faint).font_family(super::MONO_FONT).truncate().child(site.host.clone())),
-                            )
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("edit-{}", site.id)))
-                                    .opacity(0.)
-                                    .group_hover("site-row", |s| s.opacity(1.))
-                                    .child(icon("pencil", 13., t.muted))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.open_site_editor(Some(s2.clone()), window, cx);
-                                    })),
-                            )
-                            .child(if connecting {
-                                div().text_size(px(10.)).text_color(t.warn).child("…")
-                            } else {
-                                div().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(t.faint).child(site.protocol.label())
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| this.connect_site(s1.clone(), cx)))
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(move |this, ev: &MouseDownEvent, _, cx| this.open_icon_picker(site_id.clone(), ev.position, cx)),
-                            ),
-                    );
+                } else {
+                    self.toast(format!("Folder not found: {path}"), true);
                 }
             }
-            list = list.child(g);
+            Side::Remote => {
+                let Some(session) = self.session() else { return };
+                let current = self.pane(Side::Remote).map(|p| p.path.clone()).unwrap_or_default();
+                let target = if value.starts_with('/') {
+                    value.to_string()
+                } else if value == "~" || value.starts_with("~/") {
+                    session.resolve(value)
+                } else {
+                    join_remote(&current, value)
+                };
+                let target = normalize_remote(&target);
+                let core = self.core.clone();
+                let t2 = target.clone();
+                self.run(cx, async move { core.is_dir(&session, &t2).await }, move |this, r, cx| match r {
+                    Ok(true) => this.navigate(Side::Remote, target, cx),
+                    Ok(false) => this.toast(format!("{target} is not a folder"), true),
+                    Err(e) => this.toast(format!("{target}: {e:#}"), true),
+                });
+            }
         }
+        cx.notify();
+    }
 
-        div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .w(px(240.))
-            .h_full()
-            .gap(px(12.))
-            .px(px(10.))
-            .py(px(12.))
-            .bg(t.surface)
-            .border_r_1()
-            .border_color(t.border)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .px(px(6.))
-                    .h(px(26.))
-                    .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("Connections"))
-                    .child(icon_button("new-site", "plus", cx).on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))))
-                    .child(icon_button("collapse", "panel-left-close", cx).on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))),
-            )
-            .child(self.quick.clone())
-            .child(div().id("conn-list").flex_1().min_h_0().overflow_y_scroll().child(list))
+    pub fn browse_local_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open folder".into()) });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = rx.await
+                && let Some(p) = paths.first()
+            {
+                let p = p.to_string_lossy().to_string();
+                this.update(cx, |this, cx| this.navigate(Side::Local, p, cx)).ok();
+            }
+        })
+        .detach();
     }
 
     fn render_menu(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
@@ -1378,6 +1176,27 @@ impl Workspace {
     }
 }
 
+pub struct PathEdit {
+    pub side: Side,
+    pub input: Entity<TextInput>,
+    _sub: Subscription,
+}
+
+/// Resolve `.` and `..` segments of an absolute remote path.
+pub fn normalize_remote(path: &str) -> String {
+    let mut parts: Vec<&str> = vec![];
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+
 pub fn perm_to_octal(p: &str) -> String {
     let chars: Vec<char> = p.chars().collect();
     if chars.len() < 10 {
@@ -1419,14 +1238,13 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
-        let collapsed = self.core.config.lock().sidebar_collapsed;
-        let rail = self.render_rail(collapsed, cx);
-        let panel = (!collapsed).then(|| self.render_panel(cx));
+        let rail = self.render_rail(cx);
         let content = match self.view {
             View::Main => self.render_main(window, cx).into_any_element(),
             View::Settings => self.render_settings(window, cx).into_any_element(),
         };
         let menu = self.render_menu(cx);
+        let rail_menu = self.render_rail_menu(cx);
         let modal = self.render_modal(window, cx);
         let toasts = self.render_toasts(cx);
         let titlebar = self.render_titlebar(window, cx);
@@ -1456,15 +1274,15 @@ impl Render for Workspace {
                     .on_action(cx.listener(Self::act_new_folder))
                     .on_action(cx.listener(Self::act_select_all))
                     .on_action(cx.listener(Self::act_dismiss))
-                    .on_action(cx.listener(Self::act_toggle_sidebar))
+                    .on_action(cx.listener(Self::act_edit_path))
                     .flex()
                     .flex_1()
                     .min_h_0()
                     .child(rail)
-                    .children(panel)
                     .child(div().flex_1().min_w_0().h_full().child(content)),
             )
             .children(menu)
+            .children(rail_menu)
             .children(modal)
             .child(toasts)
     }

@@ -7,10 +7,12 @@ use async_trait::async_trait;
 use suppaftp::list::File as FtpFile;
 use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream, ImplAsyncFtpStream, TokioTlsStream};
 use suppaftp::tokio_rustls::rustls;
+use suppaftp::Mode;
 use suppaftp::types::FileType;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
+use super::config::{ConnectionSettings, FtpMode};
 use super::model::{Entry, Site, join_remote};
 use super::remote::{CHUNK, Progress, RemoteFs, cancelled_err, sort_entries};
 
@@ -18,9 +20,21 @@ pub struct FtpFs<T: TokioTlsStream + Send> {
     stream: Mutex<ImplAsyncFtpStream<T>>,
 }
 
-const TIMEOUT: Duration = Duration::from_secs(20);
-
-async fn login<T: TokioTlsStream + Send>(mut ftp: ImplAsyncFtpStream<T>, site: &Site) -> Result<FtpFs<T>> {
+async fn login<T: TokioTlsStream + Send>(ftp: ImplAsyncFtpStream<T>, site: &Site, settings: &ConnectionSettings) -> Result<FtpFs<T>> {
+    let mut ftp = match settings.ftp_mode {
+        FtpMode::Active => ftp.active_mode(Duration::from_secs(settings.timeout_secs.max(1))),
+        FtpMode::Passive => {
+            let mut f = ftp;
+            f.set_mode(Mode::Passive);
+            f
+        }
+        FtpMode::ExtendedPassive => {
+            let mut f = ftp;
+            f.set_mode(Mode::ExtendedPassive);
+            f
+        }
+    };
+    ftp.set_passive_nat_workaround(settings.ftp_nat_workaround);
     let user = if site.user.is_empty() { "anonymous" } else { site.user.as_str() };
     let pass = site.password.clone().unwrap_or_default();
     ftp.login(user, &pass).await.map_err(|e| anyhow!("login failed: {e}"))?;
@@ -28,15 +42,15 @@ async fn login<T: TokioTlsStream + Send>(mut ftp: ImplAsyncFtpStream<T>, site: &
     Ok(FtpFs { stream: Mutex::new(ftp) })
 }
 
-pub async fn connect_plain(site: &Site) -> Result<FtpFs<suppaftp::tokio::AsyncNoTlsStream>> {
-    let ftp = tokio::time::timeout(TIMEOUT, suppaftp::tokio::AsyncFtpStream::connect((site.host.as_str(), site.port)))
+pub async fn connect_plain(site: &Site, settings: &ConnectionSettings) -> Result<FtpFs<suppaftp::tokio::AsyncNoTlsStream>> {
+    let ftp = tokio::time::timeout(Duration::from_secs(settings.timeout_secs.max(1)), suppaftp::tokio::AsyncFtpStream::connect((site.host.as_str(), site.port)))
         .await
         .map_err(|_| anyhow!("timed out connecting to {}:{}", site.host, site.port))??;
-    login(ftp, site).await
+    login(ftp, site, settings).await
 }
 
 /// Explicit FTPS (AUTH TLS) using rustls with the Mozilla root store.
-pub async fn connect_tls(site: &Site) -> Result<FtpFs<suppaftp::tokio::AsyncRustlsStream>> {
+pub async fn connect_tls(site: &Site, settings: &ConnectionSettings) -> Result<FtpFs<suppaftp::tokio::AsyncRustlsStream>> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
@@ -44,11 +58,11 @@ pub async fn connect_tls(site: &Site) -> Result<FtpFs<suppaftp::tokio::AsyncRust
         .with_root_certificates(roots)
         .with_no_client_auth();
     let connector = AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(Arc::new(config)));
-    let ftp = tokio::time::timeout(TIMEOUT, AsyncRustlsFtpStream::connect((site.host.as_str(), site.port)))
+    let ftp = tokio::time::timeout(Duration::from_secs(settings.timeout_secs.max(1)), AsyncRustlsFtpStream::connect((site.host.as_str(), site.port)))
         .await
         .map_err(|_| anyhow!("timed out connecting to {}:{}", site.host, site.port))??;
     let ftp = ftp.into_secure(connector, &site.host).await.map_err(|e| anyhow!("TLS negotiation failed: {e}"))?;
-    login(ftp, site).await
+    login(ftp, site, settings).await
 }
 
 fn to_entry(dir: &str, f: &FtpFile, raw: &str) -> Entry {
@@ -155,7 +169,7 @@ where
             }
             dst.write_all(&buf[..n]).await?;
             total += n as u64;
-            progress.add(n as u64);
+            progress.advance(n as u64).await;
         }
         dst.flush().await?;
         src.finish().await?;
@@ -179,7 +193,7 @@ where
             }
             dst.write_all(&buf[..n]).await?;
             total += n as u64;
-            progress.add(n as u64);
+            progress.advance(n as u64).await;
         }
         dst.finish().await?;
         Ok(total)

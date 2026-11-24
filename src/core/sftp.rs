@@ -13,7 +13,7 @@ use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::config::app_dir;
+use super::config::{ConnectionSettings, app_dir};
 use super::model::{Entry, Site, join_remote, mode_to_string};
 use super::remote::{CHUNK, Progress, RemoteFs, cancelled_err, sort_entries};
 
@@ -71,16 +71,16 @@ pub struct SftpFs {
 }
 
 impl SftpFs {
-    pub async fn connect(site: &Site) -> Result<Self> {
+    pub async fn connect(site: &Site, settings: &ConnectionSettings) -> Result<Self> {
         let config = Arc::new(client::Config {
             inactivity_timeout: None,
-            keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_interval: (settings.keepalive_secs > 0).then(|| Duration::from_secs(settings.keepalive_secs)),
             keepalive_max: 4,
             ..Default::default()
         });
         let handler = Client { host_key: format!("{}:{}", site.host, site.port) };
         let mut handle = tokio::time::timeout(
-            Duration::from_secs(20),
+            Duration::from_secs(settings.timeout_secs.max(1)),
             client::connect(config, (site.host.as_str(), site.port), handler),
         )
         .await
@@ -203,7 +203,7 @@ impl RemoteFs for SftpFs {
             }
             dst.write_all(&buf[..n]).await?;
             total += n as u64;
-            progress.add(n as u64);
+            progress.advance(n as u64).await;
         }
         dst.flush().await?;
         let _ = src.shutdown().await;
@@ -229,7 +229,7 @@ impl RemoteFs for SftpFs {
             }
             dst.write_all(&buf[..n]).await?;
             total += n as u64;
-            progress.add(n as u64);
+            progress.advance(n as u64).await;
         }
         dst.shutdown().await?;
         Ok(total)

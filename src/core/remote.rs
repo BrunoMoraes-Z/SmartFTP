@@ -1,20 +1,63 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
 
+use super::config::ConnectionSettings;
 use super::model::{Entry, Protocol, Site};
+
+/// Token bucket shared by all transfers in one direction. 0 bytes/s = unlimited.
+#[derive(Default, Debug)]
+pub struct RateLimiter {
+    bytes_per_sec: AtomicU64,
+    state: tokio::sync::Mutex<Option<(Instant, f64)>>,
+}
+
+impl RateLimiter {
+    pub fn set_limit(&self, bytes_per_sec: u64) {
+        self.bytes_per_sec.store(bytes_per_sec, Ordering::Relaxed);
+    }
+
+    pub async fn take(&self, n: u64) {
+        let rate = self.bytes_per_sec.load(Ordering::Relaxed);
+        if rate == 0 {
+            return;
+        }
+        let rate = rate as f64;
+        // holding the lock while sleeping queues the other transfers behind us
+        let mut st = self.state.lock().await;
+        let now = Instant::now();
+        let (last, tokens) = st.unwrap_or((now, rate));
+        let mut tokens = (tokens + now.duration_since(last).as_secs_f64() * rate).min(rate);
+        tokens -= n as f64;
+        if tokens < 0.0 {
+            tokio::time::sleep(Duration::from_secs_f64(-tokens / rate)).await;
+            tokens = 0.0;
+        }
+        *st = Some((Instant::now(), tokens));
+    }
+}
 
 /// Shared progress / cancellation state for a single transfer.
 #[derive(Default, Debug)]
 pub struct Progress {
     pub done: AtomicU64,
     pub cancel: AtomicBool,
+    pub limiter: Option<Arc<RateLimiter>>,
 }
 
 impl Progress {
-    pub fn add(&self, n: u64) {
+    pub fn with_limiter(limiter: Arc<RateLimiter>) -> Self {
+        Progress { limiter: Some(limiter), ..Default::default() }
+    }
+    /// Count `n` transferred bytes, waiting if a speed limit applies.
+    pub async fn advance(&self, n: u64) {
+        if let Some(l) = &self.limiter {
+            l.take(n).await;
+        }
         self.done.fetch_add(n, Ordering::Relaxed);
     }
     pub fn cancelled(&self) -> bool {
@@ -47,11 +90,11 @@ pub trait RemoteFs: Send + Sync {
     }
 }
 
-pub async fn connect(site: &Site) -> Result<Box<dyn RemoteFs>> {
+pub async fn connect(site: &Site, settings: &ConnectionSettings) -> Result<Box<dyn RemoteFs>> {
     match site.protocol {
-        Protocol::Sftp => Ok(Box::new(super::sftp::SftpFs::connect(site).await?)),
-        Protocol::Ftp => Ok(Box::new(super::ftp::connect_plain(site).await?)),
-        Protocol::Ftps => Ok(Box::new(super::ftp::connect_tls(site).await?)),
+        Protocol::Sftp => Ok(Box::new(super::sftp::SftpFs::connect(site, settings).await?)),
+        Protocol::Ftp => Ok(Box::new(super::ftp::connect_plain(site, settings).await?)),
+        Protocol::Ftps => Ok(Box::new(super::ftp::connect_tls(site, settings).await?)),
     }
 }
 

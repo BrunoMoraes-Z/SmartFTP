@@ -15,12 +15,22 @@ A desktop FTP / FTPS / SFTP client written in Rust with [GPUI](https://www.gpui.
   - the "Upload to … / Download to …" button for the current selection;
   - **drag and drop** between the panes, including onto a specific folder;
   - dragging files from your OS file manager onto the remote pane.
-- **File management**: multi-select (Ctrl/Shift), a context menu (rename, permissions, delete, new folder/file, copy path), sortable columns, a dotfile toggle and clickable breadcrumbs.
+- **File management**: multi-select (Ctrl/Shift), a context menu (rename, permissions, delete, new folder/file, copy path), sortable columns and a dotfile toggle.
+- **Path bar**: click a breadcrumb to jump to it. Click the bar's empty space (or press Ctrl+L) to type a path; remote paths may be relative and `..` is resolved. The local pane also has a folder picker.
 - **Compare badges** (`▲ newer`, `older`, `only here`) between the two sides. Timestamps are preserved on upload and download.
 - **Transfer queue** running 3 transfers at a time, with progress, speed, cancel and retry. An activity log shows who did what: you or an agent.
-- **Collapsible sidebar** (Ctrl+B) that shrinks to an icon rail of open sessions.
-- **Per-connection icon and color**: right-click a session or site, or use the site editor.
+- **Connection rail**, Discord style:
+  - every saved site is a tile; hover shows its name, click connects (or switches to the open session);
+  - drag tiles to reorder; drop one site onto another to create a folder, or onto a folder to add it;
+  - folders show a grid of their sites and expand in place when clicked;
+  - right-click a site for connect, edit, icon & color, remove from folder and delete; right-click a folder to collapse, rename, ungroup or recolor it;
+  - the list scrolls when it is taller than the window.
+- **Per-connection icon and color**: from the rail's context menu or the site editor.
 - **Themed title bar**: custom-drawn and following the active theme. Windows still handles dragging, snap layouts, double-click to maximize and the min/max/close buttons.
+- **Settings modelled on FileZilla**:
+  - General: hidden files, double-click action, delete confirmation, transfer panel behaviour.
+  - Connection: timeout, number of retries, delay between failed attempts, automatic reconnect, SFTP keep-alive, FTP passive / extended passive / active mode, and a fix for passive-mode addresses behind NAT.
+  - Transfers: maximum simultaneous transfers, retries for failed transfers, download and upload speed limits, timestamp preservation, and what to do when a file already exists (overwrite, overwrite if newer, overwrite if different, rename, skip).
 - **Themes**: Graphite Dark/Light, GitHub Dark/Light, One Dark Pro and Dracula, with System / Light / Dark mode. Creating your own takes one TOML file.
 - **MCP server** over Streamable HTTP at `127.0.0.1:7331/mcp`, protected by a bearer token, with 17 tools. Sessions an agent opens show up live in the window, and sessions you open are available to agents.
 
@@ -43,7 +53,7 @@ Keyboard shortcuts:
 | `F2` | Rename |
 | `F7` | New folder |
 | `Ctrl+A` | Select all |
-| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+L` | Type a path |
 | `Esc` | Close dialog / menu |
 
 ## MCP for agents
@@ -111,8 +121,8 @@ The built-in themes are in [`themes/`](themes/).
 src/core/      protocols and state (no UI): sites/config, FTP (suppaftp), SFTP (russh + russh-sftp),
                sessions, transfer queue, activity log
 src/mcp.rs     MCP server (rmcp): HTTP + stdio
-src/ui/        GPUI: workspace (sidebar, actions), panes (file panes + queue), dialogs, settings,
-               theme, title bar, text input
+src/ui/        GPUI: workspace (state, actions), rail (connection rail), panes (file panes + queue),
+               dialogs, settings + settings_pages, theme, title bar, text input
 design/        OpenPen prototype (smartftp.pen) and exported PNGs, including the app icon
 themes/        built-in themes
 assets/        app icon (.ico / .png) and Lucide icons (ISC license)
@@ -128,7 +138,7 @@ docker run -d --name smartftp-test-ftp -p 2121:21 -p 21000-21010:21000-21010 \
   -e USERS="test|test" -e ADDRESS=127.0.0.1 -e MIN_PORT=21000 -e MAX_PORT=21010 delfer/alpine-ftp-server
 ```
 
-To connect, paste `sftp://test:test@127.0.0.1:2222/upload` or `ftp://test:test@127.0.0.1:2121` into quick connect. To use a separate configuration, set `SMARTFTP_HOME=<folder>`.
+To connect, use quick connect (the ⚡ button in the rail) with `sftp://test:test@127.0.0.1:2222/upload` or `ftp://test:test@127.0.0.1:2121`. To use a separate configuration, set `SMARTFTP_HOME=<folder>`.
 
 ## Known limitations
 

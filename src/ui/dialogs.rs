@@ -24,12 +24,16 @@ pub enum PromptKind {
     NewFile,
     Rename,
     Chmod,
+    QuickConnect,
+    RenameFolder,
 }
 
 pub struct PromptState {
     pub kind: PromptKind,
     pub side: Side,
     pub target: Option<Entry>,
+    /// Extra id for prompts that are not about a file (e.g. the folder being renamed).
+    pub extra: String,
     pub input: Entity<TextInput>,
     pub _sub: Subscription,
 }
@@ -199,7 +203,7 @@ impl SiteEditor {
 
     fn delete(&mut self, cx: &mut Context<Self>) {
         let id = self.draft.id.clone();
-        self.core.update_config(|c| c.sites.retain(|s| s.id != id));
+        self.core.update_config(|c| c.remove_site(&id));
         cx.emit(SiteEditorEvent::Close);
     }
 
@@ -477,14 +481,18 @@ impl Workspace {
                     PromptKind::NewFile => ("New empty file", "Create"),
                     PromptKind::Rename => ("Rename", "Rename"),
                     PromptKind::Chmod => ("Permissions", "Apply"),
+                    PromptKind::QuickConnect => ("Quick connect", "Connect"),
+                    PromptKind::RenameFolder => ("Rename folder", "Rename"),
                 };
                 let where_ = match p.side {
                     Side::Local => "on this computer".to_string(),
                     Side::Remote => format!("on {}", self.session().map(|s| s.site.name.clone()).unwrap_or_default()),
                 };
-                let subtitle = match &p.target {
-                    Some(e) => format!("{} {where_}", e.name),
-                    None => format!("in {} {where_}", self.pane(p.side).map(|x| x.path.clone()).unwrap_or_default()),
+                let subtitle = match (&p.kind, &p.target) {
+                    (PromptKind::QuickConnect, _) => "sftp://, ftp:// or ftps:// — the connection is not saved".to_string(),
+                    (PromptKind::RenameFolder, _) => "Folder in the connection rail".to_string(),
+                    (_, Some(e)) => format!("{} {where_}", e.name),
+                    (_, None) => format!("in {} {where_}", self.pane(p.side).map(|x| x.path.clone()).unwrap_or_default()),
                 };
                 deferred(
                     scrim(true, cx).child(

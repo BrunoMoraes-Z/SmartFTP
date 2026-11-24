@@ -8,15 +8,17 @@ use super::components::*;
 use super::theme::{Theme, theme};
 use super::workspace::Workspace;
 use crate::core::config::{Config, ExistsAction, FtpMode, app_dir};
+use crate::i18n::{self, Lang, tr, trf};
 
 type Setter = Rc<dyn Fn(&mut Config)>;
+type ChoiceSetter<T> = Rc<dyn Fn(&mut Config, T)>;
 
 /// Speed limit presets in KiB/s (0 = unlimited).
 const SPEED_STEPS: &[u64] = &[0, 64, 128, 256, 512, 1024, 2048, 5120, 10240, 20480, 51200, 102400];
 
 fn speed_label(kib: u64) -> String {
     match kib {
-        0 => "Unlimited".into(),
+        0 => tr("Unlimited").into(),
         k if k >= 1024 => format!("{} MiB/s", k / 1024),
         k => format!("{k} KiB/s"),
     }
@@ -28,15 +30,16 @@ fn step_speed(cur: u64, up: bool) -> u64 {
 }
 
 fn section(title: &str, t: &Theme) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .p(px(4.))
-        .rounded(px(10.))
-        .bg(t.surface)
-        .border_1()
-        .border_color(t.border)
-        .child(div().px(px(14.)).pt(px(12.)).pb(px(6.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(t.muted).child(title.to_string().to_uppercase()))
+    div().flex().flex_col().p(px(4.)).rounded(px(10.)).bg(t.surface).border_1().border_color(t.border).child(
+        div()
+            .px(px(14.))
+            .pt(px(12.))
+            .pb(px(6.))
+            .text_size(px(12.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(t.muted)
+            .child(title.to_string().to_uppercase()),
+    )
 }
 
 fn row(title: &str, desc: &str, control: impl IntoElement, t: &Theme) -> gpui::Div {
@@ -97,29 +100,38 @@ impl Workspace {
             .child(btn(format!("{id}-inc"), "plus", inc, cx))
     }
 
-    fn segmented<T: Copy + PartialEq + 'static>(&self, id: &str, options: &[(&'static str, T)], current: T, set: Rc<dyn Fn(&mut Config, T)>, cx: &mut Context<Self>) -> impl IntoElement + use<T> {
+    fn segmented<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &str,
+        options: &[(&'static str, T)],
+        current: T,
+        set: ChoiceSetter<T>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<T> {
         let t = theme(cx).clone();
-        div().flex().h(px(32.)).p(px(2.)).gap(px(2.)).rounded(px(7.)).bg(t.bg).border_1().border_color(t.border).children(options.iter().map(|(label, value)| {
-            let on = *value == current;
-            let set = set.clone();
-            let value = *value;
-            div()
-                .id(SharedString::from(format!("{id}-{label}")))
-                .flex()
-                .items_center()
-                .px(px(10.))
-                .rounded(px(5.))
-                .cursor_pointer()
-                .text_size(px(12.))
-                .when(on, |d| d.bg(t.hover).font_weight(FontWeight::SEMIBOLD))
-                .text_color(if on { t.ink } else { t.muted })
-                .child(*label)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let set = set.clone();
-                    this.core.update_config(move |c| set(c, value));
-                    cx.notify();
-                }))
-        }))
+        div().flex().h(px(32.)).p(px(2.)).gap(px(2.)).rounded(px(7.)).bg(t.bg).border_1().border_color(t.border).children(
+            options.iter().map(|(label, value)| {
+                let on = *value == current;
+                let set = set.clone();
+                let value = *value;
+                div()
+                    .id(SharedString::from(format!("{id}-{label}")))
+                    .flex()
+                    .items_center()
+                    .px(px(10.))
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .text_size(px(12.))
+                    .when(on, |d| d.bg(t.hover).font_weight(FontWeight::SEMIBOLD))
+                    .text_color(if on { t.ink } else { t.muted })
+                    .child(*label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let set = set.clone();
+                        this.core.update_config(move |c| set(c, value));
+                        cx.notify();
+                    }))
+            }),
+        )
     }
 
     fn switch(&self, id: &str, on: bool, f: Setter, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -135,6 +147,36 @@ impl Workspace {
             .child(div().text_color(t.muted).child(subtitle.to_string()))
     }
 
+    /// Language selector: "auto" plus every supported language (shown by its native name).
+    fn language_picker(&self, current: &str, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let mut options: Vec<(&'static str, &'static str)> = vec![("auto", tr("Automatic (system)"))];
+        options.extend(Lang::ALL.iter().map(|l| (l.code(), l.name())));
+        let current = if options.iter().any(|(code, _)| *code == current) { current.to_string() } else { "auto".to_string() };
+        div().flex().h(px(32.)).p(px(2.)).gap(px(2.)).rounded(px(7.)).bg(t.bg).border_1().border_color(t.border).children(
+            options.into_iter().map(|(code, label)| {
+                let on = code == current;
+                div()
+                    .id(SharedString::from(format!("lang-{code}")))
+                    .flex()
+                    .items_center()
+                    .px(px(10.))
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .text_size(px(12.))
+                    .when(on, |d| d.bg(t.hover).font_weight(FontWeight::SEMIBOLD))
+                    .text_color(if on { t.ink } else { t.muted })
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.core.update_config(move |c| c.interface.language = code.to_string());
+                        i18n::set_lang(i18n::resolve(code));
+                        cx.refresh_windows();
+                        cx.notify();
+                    }))
+            }),
+        )
+    }
+
     pub fn render_general(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let ui = self.core.config.lock().interface.clone();
@@ -143,31 +185,98 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(18.))
-            .child(Self::page_header("General", "How the file panes behave.", &t))
+            .child(Self::page_header(tr("General"), tr("Language and how the file panes behave."), &t))
+            .child(section(tr("Language"), &t).child(row(
+                tr("Language"),
+                &trf("Automatic follows the system language (currently {lang}).", &[("lang", i18n::detect().name())]),
+                self.language_picker(&ui.language, cx),
+                &t,
+            )))
             .child(
-                section("File panes", &t)
-                    .child(row("Show hidden files", "Show dotfiles (e.g. .env, .htaccess) when a pane opens. Toggle per pane with the eye button.", self.switch("show-hidden", ui.show_hidden, Rc::new(|c| c.interface.show_hidden = !c.interface.show_hidden), cx), &t))
+                section(tr("File panes"), &t)
                     .child(row(
-                        "Double-clicking a file",
-                        "Transfer it to the other side, or open local files with their default app.",
-                        self.segmented("dbl", &[("Transfer", true), ("Open", false)], ui.double_click_transfers, Rc::new(|c, v| c.interface.double_click_transfers = v), cx),
+                        tr("Show hidden files"),
+                        tr("Show dotfiles (e.g. .env, .htaccess) when a pane opens. Toggle per pane with the eye button."),
+                        self.switch("show-hidden", ui.show_hidden, Rc::new(|c| c.interface.show_hidden = !c.interface.show_hidden), cx),
                         &t,
                     ))
-                    .child(row("Confirm before deleting", "Ask before deleting local or remote files and folders.", self.switch("confirm-del", ui.confirm_delete, Rc::new(|c| c.interface.confirm_delete = !c.interface.confirm_delete), cx), &t))
-                    .child(row("Open the transfer panel", "Expand the transfer panel when a transfer starts.", self.switch("open-drawer", ui.open_drawer_on_transfer, Rc::new(|c| c.interface.open_drawer_on_transfer = !c.interface.open_drawer_on_transfer), cx), &t)),
+                    .child(row(
+                        tr("Double-clicking a file"),
+                        tr("Transfer it to the other side, or open local files with their default app."),
+                        self.segmented(
+                            "dbl",
+                            &[(tr("Transfer"), true), (tr("Open"), false)],
+                            ui.double_click_transfers,
+                            Rc::new(|c, v| c.interface.double_click_transfers = v),
+                            cx,
+                        ),
+                        &t,
+                    ))
+                    .child(row(
+                        tr("Confirm before deleting"),
+                        tr("Ask before deleting local or remote files and folders."),
+                        self.switch(
+                            "confirm-del",
+                            ui.confirm_delete,
+                            Rc::new(|c| c.interface.confirm_delete = !c.interface.confirm_delete),
+                            cx,
+                        ),
+                        &t,
+                    ))
+                    .child(row(
+                        tr("Open the transfer panel"),
+                        tr("Expand the transfer panel when a transfer starts."),
+                        self.switch(
+                            "open-drawer",
+                            ui.open_drawer_on_transfer,
+                            Rc::new(|c| c.interface.open_drawer_on_transfer = !c.interface.open_drawer_on_transfer),
+                            cx,
+                        ),
+                        &t,
+                    )),
             )
             .child(
-                section("Data", &t).child(row(
-                    "Settings folder",
-                    &dir.display().to_string(),
-                    button("open-cfg", "Open folder", Some("folder-open"), BtnKind::Outline, cx).on_click(cx.listener(move |_, _, _, cx| {
+                section(tr("Updates"), &t)
+                    .child(row(
+                        &trf("Version {version}", &[("version", env!("CARGO_PKG_VERSION"))]),
+                        &{
+                            let status = self.update_status();
+                            if status.is_empty() {
+                                tr("Updates are downloaded from GitHub Releases and verified with SHA-256 before installing.").to_string()
+                            } else {
+                                status
+                            }
+                        },
+                        div().flex().gap(px(8.)).children(self.render_update_pill(cx)).child(
+                            button("check-updates", tr("Check now"), Some("refresh-cw"), BtnKind::Outline, cx)
+                                .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(true, cx))),
+                        ),
+                        &t,
+                    ))
+                    .child(row(
+                        tr("Check for updates on startup"),
+                        tr("Look for a newer release on GitHub when SmartFTP starts. Nothing is installed without asking."),
+                        self.switch(
+                            "check-updates-startup",
+                            ui.check_updates,
+                            Rc::new(|c| c.interface.check_updates = !c.interface.check_updates),
+                            cx,
+                        ),
+                        &t,
+                    )),
+            )
+            .child(section(tr("Data"), &t).child(row(
+                tr("Settings folder"),
+                &dir.display().to_string(),
+                button("open-cfg", tr("Open folder"), Some("folder-open"), BtnKind::Outline, cx).on_click(cx.listener(
+                    move |_, _, _, cx| {
                         let d = app_dir();
                         let _ = std::fs::create_dir_all(&d);
                         cx.open_with_system(&d);
-                    })),
-                    &t,
+                    },
                 )),
-            )
+                &t,
+            )))
     }
 
     pub fn render_connection(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -177,60 +286,96 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(18.))
-            .child(Self::page_header("Connection", "Timeouts, retries and protocol options. Changes apply to new connections.", &t))
+            .child(Self::page_header(tr("Connection"), tr("Timeouts, retries and protocol options. Changes apply to new connections."), &t))
             .child(
-                section("General", &t)
+                section(tr("General"), &t)
                     .child(row(
-                        "Timeout",
-                        "Give up connecting or logging in after this long.",
-                        self.stepper("timeout", format!("{} s", c.timeout_secs), Rc::new(|c| c.connection.timeout_secs = c.connection.timeout_secs.saturating_sub(5).max(5)), Rc::new(|c| c.connection.timeout_secs = (c.connection.timeout_secs + 5).min(600)), cx),
+                        tr("Timeout"),
+                        tr("Give up connecting or logging in after this long."),
+                        self.stepper(
+                            "timeout",
+                            format!("{} s", c.timeout_secs),
+                            Rc::new(|c| c.connection.timeout_secs = c.connection.timeout_secs.saturating_sub(5).max(5)),
+                            Rc::new(|c| c.connection.timeout_secs = (c.connection.timeout_secs + 5).min(600)),
+                            cx,
+                        ),
                         &t,
                     ))
                     .child(row(
-                        "Maximum number of retries",
-                        "Extra attempts when a connection or login fails.",
-                        self.stepper("retries", format!("{}", c.retries), Rc::new(|c| c.connection.retries = c.connection.retries.saturating_sub(1)), Rc::new(|c| c.connection.retries = (c.connection.retries + 1).min(10)), cx),
+                        tr("Maximum number of retries"),
+                        tr("Extra attempts when a connection or login fails."),
+                        self.stepper(
+                            "retries",
+                            format!("{}", c.retries),
+                            Rc::new(|c| c.connection.retries = c.connection.retries.saturating_sub(1)),
+                            Rc::new(|c| c.connection.retries = (c.connection.retries + 1).min(10)),
+                            cx,
+                        ),
                         &t,
                     ))
                     .child(row(
-                        "Delay between failed attempts",
-                        "Wait before retrying a failed connection, login or transfer.",
-                        self.stepper("retry-delay", format!("{} s", c.retry_delay_secs), Rc::new(|c| c.connection.retry_delay_secs = c.connection.retry_delay_secs.saturating_sub(1)), Rc::new(|c| c.connection.retry_delay_secs = (c.connection.retry_delay_secs + 1).min(120)), cx),
+                        tr("Delay between failed attempts"),
+                        tr("Wait before retrying a failed connection, login or transfer."),
+                        self.stepper(
+                            "retry-delay",
+                            format!("{} s", c.retry_delay_secs),
+                            Rc::new(|c| c.connection.retry_delay_secs = c.connection.retry_delay_secs.saturating_sub(1)),
+                            Rc::new(|c| c.connection.retry_delay_secs = (c.connection.retry_delay_secs + 1).min(120)),
+                            cx,
+                        ),
                         &t,
                     ))
                     .child(row(
-                        "Reconnect automatically",
-                        "When the server drops the connection, reconnect and retry the operation once.",
-                        self.switch("auto-reconnect", c.auto_reconnect, Rc::new(|c| c.connection.auto_reconnect = !c.connection.auto_reconnect), cx),
+                        tr("Reconnect automatically"),
+                        tr("When the server drops the connection, reconnect and retry the operation once."),
+                        self.switch(
+                            "auto-reconnect",
+                            c.auto_reconnect,
+                            Rc::new(|c| c.connection.auto_reconnect = !c.connection.auto_reconnect),
+                            cx,
+                        ),
                         &t,
                     )),
             )
-            .child(
-                section("SFTP", &t).child(row(
-                    "Keep-alive interval",
-                    "Send a keep-alive when the connection is idle, so routers and servers don't drop it. 0 turns it off.",
-                    self.stepper(
-                        "keepalive",
-                        if c.keepalive_secs == 0 { "Off".into() } else { format!("{} s", c.keepalive_secs) },
-                        Rc::new(|c| c.connection.keepalive_secs = c.connection.keepalive_secs.saturating_sub(15)),
-                        Rc::new(|c| c.connection.keepalive_secs = (c.connection.keepalive_secs + 15).min(600)),
-                        cx,
-                    ),
-                    &t,
-                )),
-            )
+            .child(section("SFTP", &t).child(row(
+                tr("Keep-alive interval"),
+                tr("Send a keep-alive when the connection is idle, so routers and servers don't drop it. 0 turns it off."),
+                self.stepper(
+                    "keepalive",
+                    if c.keepalive_secs == 0 { tr("Off").into() } else { format!("{} s", c.keepalive_secs) },
+                    Rc::new(|c| c.connection.keepalive_secs = c.connection.keepalive_secs.saturating_sub(15)),
+                    Rc::new(|c| c.connection.keepalive_secs = (c.connection.keepalive_secs + 15).min(600)),
+                    cx,
+                ),
+                &t,
+            )))
             .child(
                 section("FTP / FTPS", &t)
                     .child(row(
-                        "Transfer mode",
-                        "Passive works behind most firewalls. Active needs the server to reach this computer.",
-                        self.segmented("ftp-mode", &[("Passive", FtpMode::Passive), ("Extended passive", FtpMode::ExtendedPassive), ("Active", FtpMode::Active)], c.ftp_mode, Rc::new(|c, v| c.connection.ftp_mode = v), cx),
+                        tr("Transfer mode"),
+                        tr("Passive works behind most firewalls. Active needs the server to reach this computer."),
+                        self.segmented(
+                            "ftp-mode",
+                            &[
+                                (tr("Passive"), FtpMode::Passive),
+                                (tr("Extended passive"), FtpMode::ExtendedPassive),
+                                (tr("Active"), FtpMode::Active),
+                            ],
+                            c.ftp_mode,
+                            Rc::new(|c, v| c.connection.ftp_mode = v),
+                            cx,
+                        ),
                         &t,
                     ))
                     .child(row(
-                        "Fix passive-mode addresses",
-                        "Use the server's address when it replies to PASV with a private IP (common behind NAT).",
-                        self.switch("nat", c.ftp_nat_workaround, Rc::new(|c| c.connection.ftp_nat_workaround = !c.connection.ftp_nat_workaround), cx),
+                        tr("Fix passive-mode addresses"),
+                        tr("Use the server's address when it replies to PASV with a private IP (common behind NAT)."),
+                        self.switch(
+                            "nat",
+                            c.ftp_nat_workaround,
+                            Rc::new(|c| c.connection.ftp_nat_workaround = !c.connection.ftp_nat_workaround),
+                            cx,
+                        ),
                         &t,
                     )),
             )
@@ -238,58 +383,58 @@ impl Workspace {
 
     pub fn render_transfers(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        let tr = self.core.config.lock().transfers.clone();
+        let xf = self.core.config.lock().transfers.clone();
         let exists_opts: &[(&str, &str, ExistsAction)] = &[
-            ("Overwrite", "Always replace the existing file.", ExistsAction::Overwrite),
-            ("Overwrite if newer", "Replace only when the source file is newer.", ExistsAction::OverwriteIfNewer),
-            ("Overwrite if different", "Replace when size or date differ (like a sync).", ExistsAction::OverwriteIfDifferent),
-            ("Rename", "Keep both: the new copy becomes \"name (1).ext\".", ExistsAction::Rename),
-            ("Skip", "Leave the existing file and skip this one.", ExistsAction::Skip),
+            (tr("Overwrite"), tr("Always replace the existing file."), ExistsAction::Overwrite),
+            (tr("Overwrite if newer"), tr("Replace only when the source file is newer."), ExistsAction::OverwriteIfNewer),
+            (tr("Overwrite if different"), tr("Replace when size or date differ (like a sync)."), ExistsAction::OverwriteIfDifferent),
+            (tr("Rename"), tr("Keep both: the new copy becomes \"name (1).ext\"."), ExistsAction::Rename),
+            (tr("Skip"), tr("Leave the existing file and skip this one."), ExistsAction::Skip),
         ];
         div()
             .flex()
             .flex_col()
             .gap(px(18.))
-            .child(Self::page_header("Transfers", "Queue concurrency, speed limits and what happens when a file already exists.", &t))
+            .child(Self::page_header(tr("Transfers"), tr("Queue concurrency, speed limits and what happens when a file already exists."), &t))
             .child(
-                section("Queue", &t)
+                section(tr("Queue"), &t)
                     .child(row(
-                        "Maximum simultaneous transfers",
-                        "How many files are transferred at the same time. Applies immediately.",
-                        self.stepper("max-conc", format!("{}", tr.max_concurrent), Rc::new(|c| c.transfers.max_concurrent = c.transfers.max_concurrent.saturating_sub(1).max(1)), Rc::new(|c| c.transfers.max_concurrent = (c.transfers.max_concurrent + 1).min(10)), cx),
+                        tr("Maximum simultaneous transfers"),
+                        tr("How many files are transferred at the same time. Applies immediately."),
+                        self.stepper("max-conc", format!("{}", xf.max_concurrent), Rc::new(|c| c.transfers.max_concurrent = c.transfers.max_concurrent.saturating_sub(1).max(1)), Rc::new(|c| c.transfers.max_concurrent = (c.transfers.max_concurrent + 1).min(10)), cx),
                         &t,
                     ))
                     .child(row(
-                        "Retries for failed transfers",
-                        "Retry a file this many times (after the delay set in Connection) before marking it failed.",
-                        self.stepper("tr-retries", format!("{}", tr.retries), Rc::new(|c| c.transfers.retries = c.transfers.retries.saturating_sub(1)), Rc::new(|c| c.transfers.retries = (c.transfers.retries + 1).min(10)), cx),
+                        tr("Retries for failed transfers"),
+                        tr("Retry a file this many times (after the delay set in Connection) before marking it failed."),
+                        self.stepper("tr-retries", format!("{}", xf.retries), Rc::new(|c| c.transfers.retries = c.transfers.retries.saturating_sub(1)), Rc::new(|c| c.transfers.retries = (c.transfers.retries + 1).min(10)), cx),
                         &t,
                     ))
                     .child(row(
-                        "Preserve timestamps",
-                        "Give the copy the same modification time as the original (needed for the compare badges and \"overwrite if newer\").",
-                        self.switch("preserve", tr.preserve_timestamps, Rc::new(|c| c.transfers.preserve_timestamps = !c.transfers.preserve_timestamps), cx),
+                        tr("Preserve timestamps"),
+                        tr("Give the copy the same modification time as the original (needed for the compare badges and \"overwrite if newer\")."),
+                        self.switch("preserve", xf.preserve_timestamps, Rc::new(|c| c.transfers.preserve_timestamps = !c.transfers.preserve_timestamps), cx),
                         &t,
                     )),
             )
             .child(
-                section("Speed limits", &t)
+                section(tr("Speed limits"), &t)
                     .child(row(
-                        "Download limit",
-                        "Shared by all downloads. Applies immediately, also to running transfers.",
-                        self.stepper("dl-limit", speed_label(tr.download_limit_kib), Rc::new(|c| c.transfers.download_limit_kib = step_speed(c.transfers.download_limit_kib, false)), Rc::new(|c| c.transfers.download_limit_kib = step_speed(c.transfers.download_limit_kib, true)), cx),
+                        tr("Download limit"),
+                        tr("Shared by all downloads. Applies immediately, also to running transfers."),
+                        self.stepper("dl-limit", speed_label(xf.download_limit_kib), Rc::new(|c| c.transfers.download_limit_kib = step_speed(c.transfers.download_limit_kib, false)), Rc::new(|c| c.transfers.download_limit_kib = step_speed(c.transfers.download_limit_kib, true)), cx),
                         &t,
                     ))
                     .child(row(
-                        "Upload limit",
-                        "Shared by all uploads.",
-                        self.stepper("ul-limit", speed_label(tr.upload_limit_kib), Rc::new(|c| c.transfers.upload_limit_kib = step_speed(c.transfers.upload_limit_kib, false)), Rc::new(|c| c.transfers.upload_limit_kib = step_speed(c.transfers.upload_limit_kib, true)), cx),
+                        tr("Upload limit"),
+                        tr("Shared by all uploads."),
+                        self.stepper("ul-limit", speed_label(xf.upload_limit_kib), Rc::new(|c| c.transfers.upload_limit_kib = step_speed(c.transfers.upload_limit_kib, false)), Rc::new(|c| c.transfers.upload_limit_kib = step_speed(c.transfers.upload_limit_kib, true)), cx),
                         &t,
                     )),
             )
             .child(
-                section("When the file already exists", &t).children(exists_opts.iter().map(|(label, desc, value)| {
-                    let on = tr.on_exists == *value;
+                section(tr("When the file already exists"), &t).children(exists_opts.iter().map(|(label, desc, value)| {
+                    let on = xf.on_exists == *value;
                     let value = *value;
                     div()
                         .id(SharedString::from(format!("exists-{label}")))

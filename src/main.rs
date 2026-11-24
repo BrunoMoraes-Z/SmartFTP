@@ -2,8 +2,10 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod core;
+mod i18n;
 mod mcp;
 mod ui;
+mod update;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()

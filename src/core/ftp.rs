@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use suppaftp::Mode;
 use suppaftp::list::File as FtpFile;
 use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream, ImplAsyncFtpStream, TokioTlsStream};
 use suppaftp::tokio_rustls::rustls;
-use suppaftp::Mode;
 use suppaftp::types::FileType;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
@@ -43,9 +43,12 @@ async fn login<T: TokioTlsStream + Send>(ftp: ImplAsyncFtpStream<T>, site: &Site
 }
 
 pub async fn connect_plain(site: &Site, settings: &ConnectionSettings) -> Result<FtpFs<suppaftp::tokio::AsyncNoTlsStream>> {
-    let ftp = tokio::time::timeout(Duration::from_secs(settings.timeout_secs.max(1)), suppaftp::tokio::AsyncFtpStream::connect((site.host.as_str(), site.port)))
-        .await
-        .map_err(|_| anyhow!("timed out connecting to {}:{}", site.host, site.port))??;
+    let ftp = tokio::time::timeout(
+        Duration::from_secs(settings.timeout_secs.max(1)),
+        suppaftp::tokio::AsyncFtpStream::connect((site.host.as_str(), site.port)),
+    )
+    .await
+    .map_err(|_| anyhow!("timed out connecting to {}:{}", site.host, site.port))??;
     login(ftp, site, settings).await
 }
 
@@ -58,30 +61,26 @@ pub async fn connect_tls(site: &Site, settings: &ConnectionSettings) -> Result<F
         .with_root_certificates(roots)
         .with_no_client_auth();
     let connector = AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(Arc::new(config)));
-    let ftp = tokio::time::timeout(Duration::from_secs(settings.timeout_secs.max(1)), AsyncRustlsFtpStream::connect((site.host.as_str(), site.port)))
-        .await
-        .map_err(|_| anyhow!("timed out connecting to {}:{}", site.host, site.port))??;
+    let ftp = tokio::time::timeout(
+        Duration::from_secs(settings.timeout_secs.max(1)),
+        AsyncRustlsFtpStream::connect((site.host.as_str(), site.port)),
+    )
+    .await
+    .map_err(|_| anyhow!("timed out connecting to {}:{}", site.host, site.port))??;
     let ftp = ftp.into_secure(connector, &site.host).await.map_err(|e| anyhow!("TLS negotiation failed: {e}"))?;
     login(ftp, site, settings).await
 }
 
 fn to_entry(dir: &str, f: &FtpFile, raw: &str) -> Entry {
-    let perms = raw
-        .split_whitespace()
-        .next()
-        .filter(|p| p.len() == 10 && p.chars().skip(1).all(|c| "rwxsStT-".contains(c)))
-        .map(str::to_string);
+    let perms =
+        raw.split_whitespace().next().filter(|p| p.len() == 10 && p.chars().skip(1).all(|c| "rwxsStT-".contains(c))).map(str::to_string);
     Entry {
         name: f.name().to_string(),
         path: join_remote(dir, f.name()),
         is_dir: f.is_directory(),
         is_symlink: f.is_symlink(),
         size: f.size() as u64,
-        modified: f
-            .modified()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()
-            .map(|d| d.as_secs() as i64),
+        modified: f.modified().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64),
         permissions: perms,
     }
 }

@@ -120,7 +120,14 @@ pub struct TransferSettings {
 
 impl Default for TransferSettings {
     fn default() -> Self {
-        TransferSettings { max_concurrent: 3, download_limit_kib: 0, upload_limit_kib: 0, on_exists: ExistsAction::Overwrite, preserve_timestamps: true, retries: 1 }
+        TransferSettings {
+            max_concurrent: 3,
+            download_limit_kib: 0,
+            upload_limit_kib: 0,
+            on_exists: ExistsAction::Overwrite,
+            preserve_timestamps: true,
+            retries: 1,
+        }
     }
 }
 
@@ -133,11 +140,22 @@ pub struct InterfaceSettings {
     pub double_click_transfers: bool,
     /// Open the transfer drawer when a transfer starts.
     pub open_drawer_on_transfer: bool,
+    /// UI language: "auto" (follow the OS), "en", "pt-BR" or "es".
+    pub language: String,
+    /// Look for a newer GitHub release at startup.
+    pub check_updates: bool,
 }
 
 impl Default for InterfaceSettings {
     fn default() -> Self {
-        InterfaceSettings { show_hidden: true, confirm_delete: true, double_click_transfers: true, open_drawer_on_transfer: true }
+        InterfaceSettings {
+            show_hidden: true,
+            confirm_delete: true,
+            double_click_transfers: true,
+            open_drawer_on_transfer: true,
+            language: "auto".into(),
+            check_updates: true,
+        }
     }
 }
 
@@ -262,10 +280,7 @@ impl Config {
     }
 
     pub fn find_site(&self, key: &str) -> Option<&Site> {
-        self.sites
-            .iter()
-            .find(|s| s.id == key)
-            .or_else(|| self.sites.iter().find(|s| s.name.eq_ignore_ascii_case(key)))
+        self.sites.iter().find(|s| s.id == key).or_else(|| self.sites.iter().find(|s| s.name.eq_ignore_ascii_case(key)))
     }
 
     pub fn upsert_site(&mut self, site: Site) {
@@ -416,7 +431,13 @@ impl Config {
             n += 1;
             name = format!("New folder {n}");
         }
-        self.rail[pos] = RailNode::Folder { id: fid.clone(), name, color: "#3E9BF0".into(), sites: vec![target.to_string(), dragged.to_string()], expanded: true };
+        self.rail[pos] = RailNode::Folder {
+            id: fid.clone(),
+            name,
+            color: "#3E9BF0".into(),
+            sites: vec![target.to_string(), dragged.to_string()],
+            expanded: true,
+        };
         self.sync_rail();
         Some(fid)
     }
@@ -454,8 +475,7 @@ mod tests {
 
     #[test]
     fn rail_layout() {
-        let mut c = Config::default();
-        c.sites = vec![site("a", ""), site("b", "Prod"), site("c", "Prod"), site("d", "")];
+        let mut c = Config { sites: vec![site("a", ""), site("b", "Prod"), site("c", "Prod"), site("d", "")], ..Default::default() };
         c.sync_rail();
         assert_eq!(c.rail.len(), 3); // a, Prod{b,c}, d
         let ids: Vec<String> = c.sites.iter().map(|s| s.id.clone()).collect();
@@ -478,7 +498,9 @@ mod tests {
         let mut b = c.sites[1].clone();
         b.group = "Staging".into();
         c.upsert_site(b);
-        assert!(c.rail.iter().any(|n| matches!(n, RailNode::Folder { name, sites, .. } if name == "Staging" && sites == &vec![ids[1].clone()])));
+        assert!(
+            c.rail.iter().any(|n| matches!(n, RailNode::Folder { name, sites, .. } if name == "Staging" && sites == &vec![ids[1].clone()]))
+        );
         c.ungroup(&f);
         assert!(c.sites.iter().filter(|s| s.group.is_empty()).count() == 3);
     }

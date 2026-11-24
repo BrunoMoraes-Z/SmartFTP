@@ -108,11 +108,7 @@ pub fn list_local(path: &Path) -> Result<Vec<Entry>> {
         let Ok(item) = item else { continue };
         let Ok(meta) = item.metadata() else { continue };
         let name = item.file_name().to_string_lossy().to_string();
-        let modified = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64);
+        let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
         out.push(Entry {
             path: item.path().to_string_lossy().to_string(),
             name,

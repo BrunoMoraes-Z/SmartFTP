@@ -119,10 +119,8 @@ impl Global for Themes {}
 
 impl Themes {
     pub fn load(cfg: &Config, os: Appearance) -> Themes {
-        let mut all: Vec<Theme> = BUILTIN
-            .iter()
-            .map(|(id, src)| Theme::from_toml(id, src, true).expect("built-in theme must parse"))
-            .collect();
+        let mut all: Vec<Theme> =
+            BUILTIN.iter().map(|(id, src)| Theme::from_toml(id, src, true).expect("built-in theme must parse")).collect();
         let mut errors = vec![];
         if let Ok(dir) = std::fs::read_dir(themes_dir()) {
             let mut files: Vec<_> = dir.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "toml")).collect();

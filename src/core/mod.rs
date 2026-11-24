@@ -560,7 +560,8 @@ impl Core {
         let action = self.config.lock().transfers.on_exists;
         let mut listings: HashMap<String, Vec<Entry>> = HashMap::new();
         for local in locals {
-            let name = local.file_name().map(|n| n.to_string_lossy().to_string()).ok_or_else(|| anyhow!("invalid path {}", local.display()))?;
+            let name =
+                local.file_name().map(|n| n.to_string_lossy().to_string()).ok_or_else(|| anyhow!("invalid path {}", local.display()))?;
             let meta = std::fs::metadata(&local).map_err(|e| anyhow!("{}: {e}", local.display()))?;
             if meta.is_dir() {
                 let target = join_remote(&remote_dir, &name);
@@ -578,9 +579,26 @@ impl Core {
                         } else {
                             let existing = self.remote_listing(session, &rdir, &mut listings, action).await;
                             if let Some(rn) = resolve_target(action, m.len(), mtime_of(&m), &item_name, &existing) {
-                                self.push_job(session, Direction::Upload, p, join_remote(&rdir, &rn), m.len(), mtime_of(&m), batch, origin.clone());
+                                self.push_job(
+                                    session,
+                                    Direction::Upload,
+                                    p,
+                                    join_remote(&rdir, &rn),
+                                    m.len(),
+                                    mtime_of(&m),
+                                    batch,
+                                    origin.clone(),
+                                );
                             } else {
-                                self.push_skipped(session, Direction::Upload, p, join_remote(&rdir, &item_name), m.len(), batch, origin.clone());
+                                self.push_skipped(
+                                    session,
+                                    Direction::Upload,
+                                    p,
+                                    join_remote(&rdir, &item_name),
+                                    m.len(),
+                                    batch,
+                                    origin.clone(),
+                                );
                             }
                         }
                     }
@@ -588,8 +606,25 @@ impl Core {
             } else {
                 let existing = self.remote_listing(session, &remote_dir, &mut listings, action).await;
                 match resolve_target(action, meta.len(), mtime_of(&meta), &name, &existing) {
-                    Some(rn) => self.push_job(session, Direction::Upload, local, join_remote(&remote_dir, &rn), meta.len(), mtime_of(&meta), batch, origin.clone()),
-                    None => self.push_skipped(session, Direction::Upload, local, join_remote(&remote_dir, &name), meta.len(), batch, origin.clone()),
+                    Some(rn) => self.push_job(
+                        session,
+                        Direction::Upload,
+                        local,
+                        join_remote(&remote_dir, &rn),
+                        meta.len(),
+                        mtime_of(&meta),
+                        batch,
+                        origin.clone(),
+                    ),
+                    None => self.push_skipped(
+                        session,
+                        Direction::Upload,
+                        local,
+                        join_remote(&remote_dir, &name),
+                        meta.len(),
+                        batch,
+                        origin.clone(),
+                    ),
                 }
             }
         }
@@ -607,7 +642,13 @@ impl Core {
     }
 
     /// Existing entries of a remote directory (cached per batch), name -> (size, mtime).
-    async fn remote_listing(&self, session: &Session, dir: &str, cache: &mut HashMap<String, Vec<Entry>>, action: ExistsAction) -> HashMap<String, (u64, Option<i64>)> {
+    async fn remote_listing(
+        &self,
+        session: &Session,
+        dir: &str,
+        cache: &mut HashMap<String, Vec<Entry>>,
+        action: ExistsAction,
+    ) -> HashMap<String, (u64, Option<i64>)> {
         if action == ExistsAction::Overwrite {
             return HashMap::new();
         }
@@ -639,14 +680,32 @@ impl Core {
                             stack.push((e.path, lp));
                         } else {
                             match resolve_target(action, e.size, e.modified, &e.name, &existing) {
-                                Some(ln) => self.push_job(session, Direction::Download, ldir.join(ln), e.path, e.size, e.modified, batch, origin.clone()),
-                                None => self.push_skipped(session, Direction::Download, ldir.join(&e.name), e.path, e.size, batch, origin.clone()),
+                                Some(ln) => self.push_job(
+                                    session,
+                                    Direction::Download,
+                                    ldir.join(ln),
+                                    e.path,
+                                    e.size,
+                                    e.modified,
+                                    batch,
+                                    origin.clone(),
+                                ),
+                                None => self.push_skipped(
+                                    session,
+                                    Direction::Download,
+                                    ldir.join(&e.name),
+                                    e.path,
+                                    e.size,
+                                    batch,
+                                    origin.clone(),
+                                ),
                             }
                         }
                     }
                 }
             } else {
-                let found = self.list(session, &model::parent_remote(&remote)).await.ok().and_then(|l| l.into_iter().find(|e| e.path == remote));
+                let found =
+                    self.list(session, &model::parent_remote(&remote)).await.ok().and_then(|l| l.into_iter().find(|e| e.path == remote));
                 let (size, mtime) = found.map(|e| (e.size, e.modified)).unwrap_or((0, None));
                 let existing = local_listing(local_dir);
                 match resolve_target(action, size, mtime, &name, &existing) {
@@ -660,7 +719,18 @@ impl Core {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new_job(&self, session: &Session, direction: Direction, local: PathBuf, remote: String, total: u64, mtime: Option<i64>, batch: u64, origin: Origin, state: JobState) -> Arc<Job> {
+    fn new_job(
+        &self,
+        session: &Session,
+        direction: Direction,
+        local: PathBuf,
+        remote: String,
+        total: u64,
+        mtime: Option<i64>,
+        batch: u64,
+        origin: Origin,
+        state: JobState,
+    ) -> Arc<Job> {
         let name = match direction {
             Direction::Upload => local.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
             Direction::Download => remote.rsplit('/').next().unwrap_or_default().to_string(),
@@ -693,13 +763,32 @@ impl Core {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn push_skipped(&self, session: &Session, direction: Direction, local: PathBuf, remote: String, total: u64, batch: u64, origin: Origin) {
+    fn push_skipped(
+        &self,
+        session: &Session,
+        direction: Direction,
+        local: PathBuf,
+        remote: String,
+        total: u64,
+        batch: u64,
+        origin: Origin,
+    ) {
         let job = self.new_job(session, direction, local, remote, total, None, batch, origin, JobState::Skipped);
         *job.finished.lock() = Some(Instant::now());
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn push_job(self: &Arc<Self>, session: &Arc<Session>, direction: Direction, local: PathBuf, remote: String, total: u64, mtime: Option<i64>, batch: u64, origin: Origin) {
+    fn push_job(
+        self: &Arc<Self>,
+        session: &Arc<Session>,
+        direction: Direction,
+        local: PathBuf,
+        remote: String,
+        total: u64,
+        mtime: Option<i64>,
+        batch: u64,
+        origin: Origin,
+    ) {
         let job = self.new_job(session, direction, local, remote, total, mtime, batch, origin, JobState::Queued);
         let core = self.clone();
         let session = session.clone();
@@ -805,7 +894,13 @@ impl Drop for SlotGuard {
 
 /// Decide what to do with a file whose target may already exist.
 /// Returns the target file name to write, or `None` to skip.
-pub fn resolve_target(action: ExistsAction, size: u64, mtime: Option<i64>, name: &str, existing: &HashMap<String, (u64, Option<i64>)>) -> Option<String> {
+pub fn resolve_target(
+    action: ExistsAction,
+    size: u64,
+    mtime: Option<i64>,
+    name: &str,
+    existing: &HashMap<String, (u64, Option<i64>)>,
+) -> Option<String> {
     let Some((dsize, dmtime)) = existing.get(name) else { return Some(name.to_string()) };
     match action {
         ExistsAction::Overwrite => Some(name.to_string()),

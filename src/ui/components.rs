@@ -110,16 +110,24 @@ pub fn toggle(id: impl Into<ElementId>, on: bool, cx: &App) -> Stateful<Div> {
 }
 
 pub fn format_time(ts: Option<i64>) -> String {
-    use chrono::{Local, TimeZone};
+    use chrono::{Datelike, Local, TimeZone};
     let Some(ts) = ts else { return String::new() };
     let Some(dt) = Local.timestamp_opt(ts, 0).single() else { return String::new() };
     let now = Local::now();
+    // pt-BR / es put the day first: "05 mar" instead of "Mar 05"
+    let month = crate::i18n::month_abbr(dt.month0());
     if dt.date_naive() == now.date_naive() {
         dt.format("%H:%M").to_string()
-    } else if dt.format("%Y").to_string() == now.format("%Y").to_string() {
-        dt.format("%b %d").to_string()
+    } else if dt.year() == now.year() {
+        match month {
+            Some(m) => format!("{} {m}", dt.format("%d")),
+            None => dt.format("%b %d").to_string(),
+        }
     } else {
-        dt.format("%b %d %Y").to_string()
+        match month {
+            Some(m) => format!("{} {m} {}", dt.format("%d"), dt.year()),
+            None => dt.format("%b %d %Y").to_string(),
+        }
     }
 }
 
@@ -133,8 +141,8 @@ pub fn file_icon(name: &str, is_dir: bool, is_link: bool) -> &'static str {
         "mp4" | "mov" | "mkv" | "avi" | "webm" => "film",
         "zip" | "gz" | "tgz" | "tar" | "7z" | "rar" | "bz2" | "xz" => "archive",
         "md" | "txt" | "log" | "csv" | "pdf" | "doc" | "docx" => "file-text",
-        "rs" | "js" | "ts" | "tsx" | "jsx" | "py" | "go" | "java" | "c" | "h" | "cpp" | "css" | "scss" | "html" | "htm" | "json" | "xml"
-        | "yml" | "yaml" | "toml" | "php" | "rb" | "sh" | "sql" | "vue" => "file-code",
+        "rs" | "js" | "ts" | "tsx" | "jsx" | "py" | "go" | "java" | "c" | "h" | "cpp" | "css" | "scss" | "html" | "htm" | "json"
+        | "xml" | "yml" | "yaml" | "toml" | "php" | "rb" | "sh" | "sql" | "vue" => "file-code",
         "env" | "pem" | "key" | "crt" => "key-round",
         _ => "file",
     }

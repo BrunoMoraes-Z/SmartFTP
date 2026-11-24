@@ -7,6 +7,7 @@ use super::theme::{Appearance, Theme, Themes, theme};
 use super::workspace::Workspace;
 use crate::core::Core;
 use crate::core::config::{ThemeMode, new_token, themes_dir};
+use crate::i18n::{tr, trf};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
@@ -38,7 +39,7 @@ impl Workspace {
         let os = cx.global::<Themes>().os_appearance;
         let themes = Themes::load(&cfg, os);
         for e in &themes.errors {
-            self.toast(format!("Theme error: {e}"), true);
+            self.toast(trf("Theme error: {error}", &[("error", e)]), true);
         }
         cx.set_global(themes);
         cx.refresh_windows();
@@ -77,11 +78,11 @@ impl Workspace {
         let src = cur.source.replacen(&format!("name = \"{}\"", cur.name), &format!("name = \"{} (custom)\"", cur.name), 1);
         match std::fs::write(&path, src) {
             Ok(_) => {
-                self.toast(format!("Created {} — edit it and press Reload", path.display()), false);
+                self.toast(trf("Created {path} — edit it and press Reload", &[("path", &path.display().to_string())]), false);
                 self.reload_themes(cx);
                 cx.open_with_system(&path);
             }
-            Err(e) => self.toast(format!("Could not write theme: {e}"), true),
+            Err(e) => self.toast(trf("Could not write theme: {error}", &[("error", &e.to_string())]), true),
         }
     }
 
@@ -140,19 +141,27 @@ impl Workspace {
                             .pb(px(12.))
                             .cursor_pointer()
                             .child(icon("arrow-left", 14., t.muted))
-                            .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Settings"))
+                            .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(tr("Settings")))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.view = super::workspace::View::Main;
                                 cx.notify();
                             })),
                     )
-                    .child(nav_item("General", "sliders-horizontal", SettingsTab::General, cx))
-                    .child(nav_item("Connection", "plug", SettingsTab::Connection, cx))
-                    .child(nav_item("Transfers", "arrow-up-down", SettingsTab::Transfers, cx))
-                    .child(nav_item("Appearance", "palette", SettingsTab::Appearance, cx))
-                    .child(nav_item("MCP & Agents", "bot", SettingsTab::Mcp, cx)),
+                    .child(nav_item(tr("General"), "sliders-horizontal", SettingsTab::General, cx))
+                    .child(nav_item(tr("Connection"), "plug", SettingsTab::Connection, cx))
+                    .child(nav_item(tr("Transfers"), "arrow-up-down", SettingsTab::Transfers, cx))
+                    .child(nav_item(tr("Appearance"), "palette", SettingsTab::Appearance, cx))
+                    .child(nav_item(tr("MCP & Agents"), "bot", SettingsTab::Mcp, cx)),
             )
-            .child(div().id("settings-scroll").flex_1().min_w_0().h_full().overflow_y_scroll().child(div().flex().flex_col().gap(px(20.)).px(px(36.)).py(px(28.)).max_w(px(1100.)).child(content)))
+            .child(
+                div()
+                    .id("settings-scroll")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .child(div().flex().flex_col().gap(px(20.)).px(px(36.)).py(px(28.)).max_w(px(1100.)).child(content)),
+            )
     }
 
     fn render_appearance(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -163,24 +172,26 @@ impl Workspace {
         let active_id = t.id.clone();
 
         let mode_seg = div().flex().h(px(30.)).p(px(2.)).gap(px(2.)).rounded(px(6.)).border_1().border_color(t.border).children(
-            [(ThemeMode::System, "System", "monitor"), (ThemeMode::Light, "Light", "sun"), (ThemeMode::Dark, "Dark", "moon")].into_iter().map(|(m, label, ic)| {
-                let on = cfg.theme_mode == m;
-                div()
-                    .id(label)
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .px(px(10.))
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(t.hover))
-                    .child(icon(ic, 13., if on { t.ink } else { t.muted }))
-                    .child(div().text_size(px(12.)).text_color(if on { t.ink } else { t.muted }).child(label))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.core.update_config(|c| c.theme_mode = m);
-                        this.apply_theme(cx);
-                    }))
-            }),
+            [(ThemeMode::System, tr("System"), "monitor"), (ThemeMode::Light, tr("Light"), "sun"), (ThemeMode::Dark, tr("Dark"), "moon")]
+                .into_iter()
+                .map(|(m, label, ic)| {
+                    let on = cfg.theme_mode == m;
+                    div()
+                        .id(label)
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .px(px(10.))
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .when(on, |d| d.bg(t.hover))
+                        .child(icon(ic, 13., if on { t.ink } else { t.muted }))
+                        .child(div().text_size(px(12.)).text_color(if on { t.ink } else { t.muted }).child(label))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.core.update_config(|c| c.theme_mode = m);
+                            this.apply_theme(cx);
+                        }))
+                }),
         );
 
         let cards = themes.into_iter().map(|th| {
@@ -203,18 +214,20 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(div().size(px(14.)).rounded(px(7.)).border_color(if selected_for_slot { t.signal } else { t.faint }).when(selected_for_slot, |d| d.border_4()).when(!selected_for_slot, |d| d.border_1()))
                         .child(
                             div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .child(div().font_weight(FontWeight::MEDIUM).child(th.name.clone()))
-                                .child(div().text_size(px(11.)).text_color(t.faint).child(if th.builtin { "Built-in" } else { "Custom" })),
+                                .size(px(14.))
+                                .rounded(px(7.))
+                                .border_color(if selected_for_slot { t.signal } else { t.faint })
+                                .when(selected_for_slot, |d| d.border_4())
+                                .when(!selected_for_slot, |d| d.border_1()),
                         )
+                        .child(div().flex().flex_col().flex_1().child(div().font_weight(FontWeight::MEDIUM).child(th.name.clone())).child(
+                            div().text_size(px(11.)).text_color(t.faint).child(if th.builtin { tr("Built-in") } else { tr("Custom") }),
+                        ))
                         .child(div().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(t.muted).child(match th.appearance {
-                            Appearance::Dark => "Dark",
-                            Appearance::Light => "Light",
+                            Appearance::Dark => tr("Dark"),
+                            Appearance::Light => tr("Light"),
                         })),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.pick_theme(&th2, cx)))
@@ -225,7 +238,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(22.))
-            .child(div().flex().flex_col().gap(px(4.)).child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Appearance")).child(div().text_color(t.muted).child("Pick a theme, or drop your own .toml file into the themes folder.")))
+            .child(div().flex().flex_col().gap(px(4.)).child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(tr("Appearance"))).child(div().text_color(t.muted).child(tr("Pick a theme, or drop your own .toml file into the themes folder."))))
             .child(
                 div()
                     .flex()
@@ -237,8 +250,8 @@ impl Workspace {
                             .flex_col()
                             .flex_1()
                             .gap(px(2.))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Mode"))
-                            .child(div().text_size(px(12.)).text_color(t.faint).child("System follows the OS and switches between your selected light and dark theme.")),
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Mode")))
+                            .child(div().text_size(px(12.)).text_color(t.faint).child(tr("System follows the OS and switches between your selected light and dark theme."))),
                     )
                     .child(mode_seg),
             )
@@ -253,21 +266,21 @@ impl Workspace {
                         .gap(px(8.))
                         .w(px(320.))
                         .flex_none()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Make your own"))
-                        .child(div().text_size(px(12.)).text_color(t.muted).child("A theme is a small TOML file with 16 colors. Duplicate the current one, edit the hex values, then press Reload."))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Make your own")))
+                        .child(div().text_size(px(12.)).text_color(t.muted).child(tr("A theme is a small TOML file with 16 colors. Duplicate the current one, edit the hex values, then press Reload.")))
                         .child(
                             div()
                                 .flex()
                                 .flex_wrap()
                                 .gap(px(8.))
                                 .pt(px(6.))
-                                .child(button("th-dup", "Duplicate current", Some("copy"), BtnKind::Primary, cx).on_click(cx.listener(|this, _, _, cx| this.duplicate_theme(cx))))
-                                .child(button("th-open", "Open folder", Some("folder"), BtnKind::Outline, cx).on_click(cx.listener(|_, _, _, cx| {
+                                .child(button("th-dup", tr("Duplicate current"), Some("copy"), BtnKind::Primary, cx).on_click(cx.listener(|this, _, _, cx| this.duplicate_theme(cx))))
+                                .child(button("th-open", tr("Open folder"), Some("folder"), BtnKind::Outline, cx).on_click(cx.listener(|_, _, _, cx| {
                                     let dir = themes_dir();
                                     let _ = std::fs::create_dir_all(&dir);
                                     cx.open_with_system(&dir);
                                 })))
-                                .child(button("th-reload", "Reload", Some("rotate-cw"), BtnKind::Outline, cx).on_click(cx.listener(|this, _, _, cx| this.reload_themes(cx)))),
+                                .child(button("th-reload", tr("Reload"), Some("rotate-cw"), BtnKind::Outline, cx).on_click(cx.listener(|this, _, _, cx| this.reload_themes(cx)))),
                         )
                         .child(div().text_size(px(11.)).text_color(t.faint).font_family(super::MONO_FONT).child(themes_dir().display().to_string())),
                 )
@@ -304,9 +317,16 @@ impl Workspace {
         let url = format!("http://127.0.0.1:{}/mcp", cfg.port);
         let error = crate::mcp::status_error();
         let running = cfg.enabled && error.is_none();
-        let token_shown = if self.settings.show_token { cfg.token.clone() } else { format!("{}••••••••••••{}", &cfg.token[..5], &cfg.token[cfg.token.len() - 4..]) };
+        let token_shown = if self.settings.show_token {
+            cfg.token.clone()
+        } else {
+            format!("{}••••••••••••{}", &cfg.token[..5], &cfg.token[cfg.token.len() - 4..])
+        };
         let claude_cmd = format!("claude mcp add --transport http smartftp {url} --header \"Authorization: Bearer {}\"", cfg.token);
-        let json_cfg = format!("{{\n  \"mcpServers\": {{\n    \"smartftp\": {{\n      \"type\": \"http\",\n      \"url\": \"{url}\",\n      \"headers\": {{ \"Authorization\": \"Bearer {}\" }}\n    }}\n  }}\n}}", cfg.token);
+        let json_cfg = format!(
+            "{{\n  \"mcpServers\": {{\n    \"smartftp\": {{\n      \"type\": \"http\",\n      \"url\": \"{url}\",\n      \"headers\": {{ \"Authorization\": \"Bearer {}\" }}\n    }}\n  }}\n}}",
+            cfg.token
+        );
         let log: Vec<_> = self.core.log_entries().into_iter().filter(|l| l.origin.is_agent()).take(12).collect();
         let disabled = cfg.disabled_tools.clone();
 
@@ -327,10 +347,17 @@ impl Workspace {
                         .bg(t.bg)
                         .border_1()
                         .border_color(t.border)
-                        .child(div().flex_1().min_w_0().font_family(super::MONO_FONT).text_size(px(12.)).children(value.lines().map(|l| div().child(l.to_string()))))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .font_family(super::MONO_FONT)
+                                .text_size(px(12.))
+                                .children(value.lines().map(|l| div().child(l.to_string()))),
+                        )
                         .child(icon_button(id, "copy", cx).on_click(cx.listener(move |this, _, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(v.clone()));
-                            this.toast("Copied to clipboard", false);
+                            this.toast(tr("Copied to clipboard"), false);
                             cx.notify();
                         }))),
                 )
@@ -350,8 +377,8 @@ impl Workspace {
                             .flex_col()
                             .flex_1()
                             .gap(px(4.))
-                            .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child("MCP server"))
-                            .child(div().text_color(t.muted).child("Let AI agents drive SmartFTP through the Model Context Protocol. Agents see the same sessions you do.")),
+                            .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(tr("MCP server")))
+                            .child(div().text_color(t.muted).child(tr("Let AI agents drive SmartFTP through the Model Context Protocol. Agents see the same sessions you do."))),
                     )
                     .child(
                         div()
@@ -363,7 +390,7 @@ impl Workspace {
                             .rounded(px(15.))
                             .bg((if running { t.ok } else { t.faint }).opacity(0.12))
                             .child(div().size(px(8.)).rounded(px(4.)).bg(if running { t.ok } else { t.faint }))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).text_color(if running { t.ok } else { t.muted }).child(if running { "Running" } else if cfg.enabled { "Error" } else { "Off" })),
+                            .child(div().font_weight(FontWeight::SEMIBOLD).text_color(if running { t.ok } else { t.muted }).child(if running { tr("Running") } else if cfg.enabled { tr("Error") } else { tr("Off") })),
                     )
                     .child(div().w(px(12.)))
                     .child(toggle("mcp-enabled", cfg.enabled, cx).on_click(cx.listener(|this, _, _, cx| {
@@ -375,14 +402,14 @@ impl Workspace {
             .when_some(error, |d, e| d.child(div().text_color(t.err).text_size(px(12.)).child(e)))
             .child(
                 card(&t)
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Connect an agent"))
-                    .child(copy_row("Endpoint (Streamable HTTP)", url.clone(), "cp-url", cx))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Connect an agent")))
+                    .child(copy_row(tr("Endpoint (Streamable HTTP)"), url.clone(), "cp-url", cx))
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .gap(px(6.))
-                            .child(div().text_size(px(12.)).text_color(t.muted).font_weight(FontWeight::MEDIUM).child("Bearer token"))
+                            .child(div().text_size(px(12.)).text_color(t.muted).font_weight(FontWeight::MEDIUM).child(tr("Bearer token")))
                             .child(
                                 div()
                                     .flex()
@@ -402,22 +429,22 @@ impl Workspace {
                                     .child(icon_button("tok-copy", "copy", cx).on_click(cx.listener(|this, _, _, cx| {
                                         let tok = this.core.config.lock().mcp.token.clone();
                                         cx.write_to_clipboard(ClipboardItem::new_string(tok));
-                                        this.toast("Token copied", false);
+                                        this.toast(tr("Token copied"), false);
                                         cx.notify();
                                     })))
-                                    .child(button("tok-new", "Regenerate", Some("refresh-cw"), BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
+                                    .child(button("tok-new", tr("Regenerate"), Some("refresh-cw"), BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
                                         this.core.update_config(|c| c.mcp.token = new_token());
-                                        this.toast("New token generated — update your agents", false);
+                                        this.toast(tr("New token generated — update your agents"), false);
                                         cx.notify();
                                     }))),
                             ),
                     )
                     .child(copy_row("Claude Code", claude_cmd, "cp-claude", cx))
-                    .child(copy_row("Other MCP clients (JSON)", json_cfg, "cp-json", cx))
-                    .child(div().text_size(px(12.)).text_color(t.faint).child("Headless alternative: run `smartftp --mcp-stdio` as a stdio server (uses the same saved sites, but its own sessions).")),
+                    .child(copy_row(tr("Other MCP clients (JSON)"), json_cfg, "cp-json", cx))
+                    .child(div().text_size(px(12.)).text_color(t.faint).child(tr("Headless alternative: run `smartftp --mcp-stdio` as a stdio server (uses the same saved sites, but its own sessions)."))),
             )
             .child(
-                card(&t).child(div().font_weight(FontWeight::SEMIBOLD).child("Exposed tools")).child(div().flex().flex_wrap().gap(px(8.)).children(crate::mcp::TOOLS.iter().map(|(name, desc)| {
+                card(&t).child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Exposed tools"))).child(div().flex().flex_wrap().gap(px(8.)).children(crate::mcp::TOOLS.iter().map(|(name, desc)| {
                     let on = !disabled.iter().any(|d| d == name);
                     let n = name.to_string();
                     div()
@@ -429,7 +456,7 @@ impl Workspace {
                         .px(px(12.))
                         .rounded(px(7.))
                         .bg(t.surface2)
-                        .child(div().flex().flex_col().flex_1().min_w_0().child(div().font_family(super::MONO_FONT).text_size(px(12.)).child(name.to_string())).child(div().text_size(px(11.)).text_color(t.faint).truncate().child(desc.to_string())))
+                        .child(div().flex().flex_col().flex_1().min_w_0().child(div().font_family(super::MONO_FONT).text_size(px(12.)).child(name.to_string())).child(div().text_size(px(11.)).text_color(t.faint).truncate().child(tr(desc))))
                         .child(toggle(SharedString::from(format!("tool-{name}")), on, cx).on_click(cx.listener(move |this, _, _, cx| {
                             let n = n.clone();
                             this.core.update_config(|c| {
@@ -445,8 +472,8 @@ impl Workspace {
             )
             .child(
                 card(&t)
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Recent agent activity"))
-                    .when(log.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(t.faint).child("No agent activity yet.")))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Recent agent activity")))
+                    .when(log.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(t.faint).child(tr("No agent activity yet."))))
                     .children(log.into_iter().map(|l| {
                         div()
                             .flex()
@@ -457,7 +484,7 @@ impl Workspace {
                             .child(div().w(px(90.)).text_color(t.signal).font_weight(FontWeight::SEMIBOLD).child(l.origin.label()))
                             .child(div().w(px(110.)).font_family(super::MONO_FONT).child(l.action.clone()))
                             .child(div().flex_1().min_w_0().truncate().font_family(super::MONO_FONT).text_color(t.muted).child(l.target.clone()))
-                            .child(div().px(px(6.)).rounded(px(4.)).bg((if l.ok { t.ok } else { t.err }).opacity(0.12)).text_color(if l.ok { t.ok } else { t.err }).text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).child(if l.ok { "ok" } else { "error" }))
+                            .child(div().px(px(6.)).rounded(px(4.)).bg((if l.ok { t.ok } else { t.err }).opacity(0.12)).text_color(if l.ok { t.ok } else { t.err }).text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).child(if l.ok { tr("ok") } else { tr("error") }))
                     })),
             )
     }
@@ -482,7 +509,13 @@ fn theme_preview(th: &Theme) -> gpui::Div {
             .child(div().w(px(14.)).h(px(4.)).rounded(px(2.)).bg(th.faint))
     };
     let pane = |offset: f32| {
-        div().flex().flex_col().flex_1().gap(px(5.)).p(px(8.)).children((0..5).map(move |r| row(30. + ((r as f32 * 13. + offset) % 28.), r < 2, offset == 0. && r == 2)))
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .gap(px(5.))
+            .p(px(8.))
+            .children((0..5).map(move |r| row(30. + ((r as f32 * 13. + offset) % 28.), r < 2, offset == 0. && r == 2)))
     };
     div()
         .flex()
@@ -493,20 +526,49 @@ fn theme_preview(th: &Theme) -> gpui::Div {
         .bg(th.bg)
         .border_1()
         .child(
-            div().flex().flex_col().items_center().gap(px(6.)).w(px(26.)).py(px(8.)).bg(th.surface).border_r_1().border_color(th.border).children(
-                ["#E5484D", "#3E9BF0", "#5BB974"].into_iter().map(|c| {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(6.))
+                .w(px(26.))
+                .py(px(8.))
+                .bg(th.surface)
+                .border_r_1()
+                .border_color(th.border)
+                .children(["#E5484D", "#3E9BF0", "#5BB974"].into_iter().map(|c| {
                     let col = site_color(c);
                     div().size(px(14.)).rounded(px(3.)).bg(col.opacity(0.25)).border_1().border_color(col)
-                }),
-            ),
+                })),
         )
         .child(
             div()
                 .flex()
                 .flex_col()
                 .flex_1()
-                .child(div().flex().items_center().h(px(22.)).px(px(8.)).border_b_1().border_color(th.border).child(div().w(px(40.)).h(px(5.)).rounded(px(2.)).bg(th.ink)).child(div().flex_1()).child(div().w(px(26.)).h(px(10.)).rounded(px(2.)).bg(th.accent)))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .h(px(22.))
+                        .px(px(8.))
+                        .border_b_1()
+                        .border_color(th.border)
+                        .child(div().w(px(40.)).h(px(5.)).rounded(px(2.)).bg(th.ink))
+                        .child(div().flex_1())
+                        .child(div().w(px(26.)).h(px(10.)).rounded(px(2.)).bg(th.accent)),
+                )
                 .child(div().flex().flex_1().child(pane(0.)).child(div().w(px(1.)).bg(th.border)).child(pane(7.)))
-                .child(div().flex().items_center().h(px(20.)).px(px(8.)).bg(th.surface).border_t_1().border_color(th.border).child(div().w_full().h(px(2.)).bg(th.border).child(div().w(px(80.)).h_full().bg(th.signal)))),
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .h(px(20.))
+                        .px(px(8.))
+                        .bg(th.surface)
+                        .border_t_1()
+                        .border_color(th.border)
+                        .child(div().w_full().h(px(2.)).bg(th.border).child(div().w(px(80.)).h_full().bg(th.signal))),
+                ),
         )
 }

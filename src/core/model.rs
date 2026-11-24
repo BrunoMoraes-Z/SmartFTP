@@ -95,11 +95,7 @@ impl Site {
     }
 
     pub fn address(&self) -> String {
-        if self.user.is_empty() {
-            format!("{}:{}", self.host, self.port)
-        } else {
-            format!("{}@{}:{}", self.user, self.host, self.port)
-        }
+        if self.user.is_empty() { format!("{}:{}", self.host, self.port) } else { format!("{}@{}:{}", self.user, self.host, self.port) }
     }
 
     /// Parse `sftp://user:pass@host:port/path` style quick-connect strings.
@@ -180,7 +176,13 @@ impl Origin {
 
 pub fn mode_to_string(mode: u32, is_dir: bool, is_link: bool) -> String {
     let mut s = String::with_capacity(10);
-    s.push(if is_link { 'l' } else if is_dir { 'd' } else { '-' });
+    s.push(if is_link {
+        'l'
+    } else if is_dir {
+        'd'
+    } else {
+        '-'
+    });
     for shift in [6, 3, 0] {
         let bits = (mode >> shift) & 7;
         s.push(if bits & 4 != 0 { 'r' } else { '-' });
@@ -194,11 +196,7 @@ pub fn join_remote(dir: &str, name: &str) -> String {
     if name.starts_with('/') {
         return name.to_string();
     }
-    if dir.is_empty() || dir == "/" {
-        format!("/{name}")
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
+    if dir.is_empty() || dir == "/" { format!("/{name}") } else { format!("{}/{}", dir.trim_end_matches('/'), name) }
 }
 
 pub fn parent_remote(path: &str) -> String {
@@ -217,7 +215,13 @@ pub fn human_size(bytes: u64) -> String {
         v /= 1024.0;
         u += 1;
     }
-    if u == 0 { format!("{bytes} B") } else if v < 10.0 { format!("{v:.1} {}", UNITS[u]) } else { format!("{v:.0} {}", UNITS[u]) }
+    if u == 0 {
+        format!("{bytes} B")
+    } else if v < 10.0 {
+        format!("{v:.1} {}", UNITS[u])
+    } else {
+        format!("{v:.0} {}", UNITS[u])
+    }
 }
 
 #[cfg(test)]

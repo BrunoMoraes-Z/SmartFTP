@@ -4,9 +4,9 @@
 //! and over stdio with `smartftp --mcp-stdio` (headless, own sessions).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -211,7 +211,9 @@ impl SmartFtpMcp {
         to_json(json!({ "sessions": self.core.session_infos() }))
     }
 
-    #[tool(description = "Open a new session. Pass `site` (name or id of a saved site) or `url` (sftp://user@host:port/path, ftp://..., ftps://...). Returns the session id used by the other tools. The session also appears in the SmartFTP window.")]
+    #[tool(
+        description = "Open a new session. Pass `site` (name or id of a saved site) or `url` (sftp://user@host:port/path, ftp://..., ftps://...). Returns the session id used by the other tools. The session also appears in the SmartFTP window."
+    )]
     async fn connect(&self, peer: Peer<RoleServer>, Parameters(args): Parameters<ConnectArgs>) -> Result<String, String> {
         self.guard("connect")?;
         let site = if let Some(key) = args.site.as_deref().filter(|s| !s.is_empty()) {
@@ -247,7 +249,9 @@ impl SmartFtpMcp {
         Ok("disconnected".into())
     }
 
-    #[tool(description = "List a remote directory. Returns entries with name, path, is_dir, size (bytes), modified (unix seconds) and permissions.")]
+    #[tool(
+        description = "List a remote directory. Returns entries with name, path, is_dir, size (bytes), modified (unix seconds) and permissions."
+    )]
     async fn list_dir(&self, peer: Peer<RoleServer>, Parameters(args): Parameters<PathArgs>) -> Result<String, String> {
         self.guard("list_dir")?;
         let s = self.session(&args.session)?;
@@ -318,7 +322,9 @@ impl SmartFtpMcp {
         to_json(json!({ "written": p, "bytes": args.content.len() }))
     }
 
-    #[tool(description = "Upload local files or folders to a remote directory. Transfers show up in the SmartFTP queue. By default waits for completion and returns per-file results.")]
+    #[tool(
+        description = "Upload local files or folders to a remote directory. Transfers show up in the SmartFTP queue. By default waits for completion and returns per-file results."
+    )]
     async fn upload(&self, peer: Peer<RoleServer>, Parameters(args): Parameters<UploadArgs>) -> Result<String, String> {
         self.guard("upload")?;
         let s = self.session(&args.session)?;
@@ -327,7 +333,9 @@ impl SmartFtpMcp {
         self.batch_result(batch, args.wait.unwrap_or(true)).await
     }
 
-    #[tool(description = "Download remote files or folders to a local directory. By default waits for completion and returns per-file results.")]
+    #[tool(
+        description = "Download remote files or folders to a local directory. By default waits for completion and returns per-file results."
+    )]
     async fn download(&self, peer: Peer<RoleServer>, Parameters(args): Parameters<DownloadArgs>) -> Result<String, String> {
         self.guard("download")?;
         let s = self.session(&args.session)?;
@@ -353,7 +361,11 @@ impl SmartFtpMcp {
     #[tool(description = "List a directory on the local computer (to find files to upload).")]
     async fn list_local_dir(&self, Parameters(args): Parameters<LocalArgs>) -> Result<String, String> {
         self.guard("list_local_dir")?;
-        let path = if args.path.is_empty() { dirs::home_dir().unwrap_or_default() } else { PathBuf::from(crate::core::sftp::expand_tilde(&args.path)) };
+        let path = if args.path.is_empty() {
+            dirs::home_dir().unwrap_or_default()
+        } else {
+            PathBuf::from(crate::core::sftp::expand_tilde(&args.path))
+        };
         let entries = remote::list_local(&path).map_err(err)?;
         to_json(json!({ "path": path, "entries": entries }))
     }
@@ -451,4 +463,3 @@ pub async fn serve_stdio(core: Arc<Core>) -> anyhow::Result<()> {
     server.waiting().await?;
     Ok(())
 }
-

@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, SharedString, Window,
-    anchored, deferred, div, hsla, prelude::*, px,
+    AnyElement, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, SharedString, Window, anchored,
+    deferred, div, hsla, prelude::*, px,
 };
 
 use super::components::*;
@@ -17,6 +17,9 @@ use super::workspace::{Tip, View, Workspace};
 use crate::core::config::RailNode;
 use crate::core::model::Site;
 use crate::core::{JobState, Session};
+use crate::i18n::{tr, trf};
+
+type MenuAction = Box<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
 pub const RAIL_WIDTH: f32 = 68.;
 const TILE: f32 = 42.;
@@ -64,7 +67,9 @@ impl Workspace {
         if mine.is_empty() {
             return (Status::Offline, false, false);
         }
-        let busy = jobs.iter().any(|j| mine.iter().any(|s| s.id == j.session_id) && matches!(*j.state.lock(), JobState::Running | JobState::Queued));
+        let busy = jobs
+            .iter()
+            .any(|j| mine.iter().any(|s| s.id == j.session_id) && matches!(*j.state.lock(), JobState::Running | JobState::Queued));
         let active = mine.iter().any(|s| self.active.as_deref() == Some(s.id.as_str()));
         let agent = mine.iter().any(|s| s.origin.is_agent());
         (if busy { Status::Busy } else { Status::Online }, active, agent)
@@ -106,7 +111,15 @@ impl Workspace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn site_tile(&self, site: &Site, size: f32, sessions: &[Arc<Session>], in_folder: bool, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    fn site_tile(
+        &self,
+        site: &Site,
+        size: f32,
+        sessions: &[Arc<Session>],
+        in_folder: bool,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (status, active, agent) = self.site_status(&site.id, sessions);
         let color = site_color(&site.color);
         let id = site.id.clone();
@@ -159,7 +172,9 @@ impl Workspace {
                         .bg(if status == Status::Busy { t.warn } else { t.ok }),
                 )
             })
-            .when(agent, |d| d.child(div().absolute().left(px((RAIL_WIDTH - 12. - size) / 2. - 3.)).top(px(-2.)).child(icon("bot", 12., t.signal))))
+            .when(agent, |d| {
+                d.child(div().absolute().left(px((RAIL_WIDTH - 12. - size) / 2. - 3.)).top(px(-2.)).child(icon("bot", 12., t.signal)))
+            })
             .tooltip(move |_, cx| cx.new(|_| Tip(name.clone())).into())
             .on_click(cx.listener(move |this, _, _, cx| this.open_site(&id, cx)))
             .on_mouse_down(
@@ -219,7 +234,12 @@ impl Workspace {
                     let fid_menu = id.clone();
                     let fid_drop = id.clone();
                     let count = members.len();
-                    let label: SharedString = format!("{name} · {count} site{}", if count == 1 { "" } else { "s" }).into();
+                    let label: SharedString = if count == 1 {
+                        trf("{name} · 1 site", &[("name", name)])
+                    } else {
+                        trf("{name} · {n} sites", &[("name", name), ("n", &count.to_string())])
+                    }
+                    .into();
                     let accept = t.ink;
                     let header = div()
                         .id(SharedString::from(format!("rail-folder-{id}")))
@@ -244,13 +264,11 @@ impl Workspace {
                         })
                         .child(if *expanded {
                             // open folder: a folder glyph in the folder's color
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size(px(TILE - 4.))
-                                .rounded(px(10.))
-                                .child(icon("folder-open", 20., fcolor))
+                            div().flex().items_center().justify_center().size(px(TILE - 4.)).rounded(px(10.)).child(icon(
+                                "folder-open",
+                                20.,
+                                fcolor,
+                            ))
                         } else {
                             folder_tile(&member_sites, fcolor, TILE - 4., &t)
                         })
@@ -272,8 +290,13 @@ impl Workspace {
                                 cx.notify();
                             }),
                         )
-                        .on_drag(DraggedRail { id: id.clone(), is_folder: true, icon: "folder".into(), color: fcolor }, |d: &DraggedRail, _, _, cx| cx.new(|_| d.clone()))
-                        .drag_over::<DraggedRail>(move |s, dr, _, _| if !dr.is_folder { s.bg(accept.opacity(0.08)).rounded(px(12.)) } else { s })
+                        .on_drag(
+                            DraggedRail { id: id.clone(), is_folder: true, icon: "folder".into(), color: fcolor },
+                            |d: &DraggedRail, _, _, cx| cx.new(|_| d.clone()),
+                        )
+                        .drag_over::<DraggedRail>(
+                            move |s, dr, _, _| if !dr.is_folder { s.bg(accept.opacity(0.08)).rounded(px(12.)) } else { s },
+                        )
                         .on_drop(cx.listener(move |this, dr: &DraggedRail, _, cx| {
                             cx.stop_propagation();
                             if !dr.is_folder {
@@ -281,7 +304,15 @@ impl Workspace {
                             }
                         }));
                     if *expanded {
-                        let mut inner = div().flex().flex_col().items_center().w(px(RAIL_WIDTH - 12.)).py(px(2.)).rounded(px(14.)).bg(fcolor.opacity(0.12)).child(header);
+                        let mut inner = div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .w(px(RAIL_WIDTH - 12.))
+                            .py(px(2.))
+                            .rounded(px(14.))
+                            .bg(fcolor.opacity(0.12))
+                            .child(header);
                         for (j, s) in member_sites.iter().enumerate() {
                             inner = inner.child(self.gap(format!("gap-{id}-{j}"), Some(id.clone()), j, &t, cx));
                             inner = inner.child(self.site_tile(s, TILE - 6., &sessions, true, &t, cx));
@@ -298,15 +329,13 @@ impl Workspace {
         list = list
             .child(
                 rail_button("rail-new", "plus", &t)
-                    .tooltip(tip("New site"))
+                    .tooltip(tip(tr("New site")))
                     .on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))),
             )
             .child(div().h(px(6.)))
-            .child(
-                rail_button("rail-quick", "zap", &t)
-                    .tooltip(tip("Quick connect (URL)"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_prompt(PromptKind::QuickConnect, super::workspace::Side::Remote, None, window, cx))),
-            )
+            .child(rail_button("rail-quick", "zap", &t).tooltip(tip(tr("Quick connect (URL)"))).on_click(cx.listener(
+                |this, _, window, cx| this.open_prompt(PromptKind::QuickConnect, super::workspace::Side::Remote, None, window, cx),
+            )))
             .child(div().h(px(10.)));
 
         div()
@@ -328,7 +357,7 @@ impl Workspace {
                     let active = self.active.as_deref() == Some(s.id.as_str());
                     let id = s.id.clone();
                     let id_menu = s.id.clone();
-                    let name: SharedString = format!("{} (not saved)", s.site.name).into();
+                    let name: SharedString = trf("{name} (not saved)", &[("name", &s.site.name)]).into();
                     div()
                         .id(SharedString::from(format!("rail-loose-{}", s.id)))
                         .relative()
@@ -338,8 +367,23 @@ impl Workspace {
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .child(div().absolute().left(px(-6.)).top(px(9.)).w(px(4.)).h(px(if active { TILE - 12. } else { 8. })).rounded_r(px(3.)).bg(t.ink))
-                        .child(div().rounded(px(10.)).border_2().border_color(if active { t.ink.opacity(0.7) } else { hsla(0., 0., 0., 0.) }).child(tile(&s.site.icon, color, TILE - 4.)))
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(-6.))
+                                .top(px(9.))
+                                .w(px(4.))
+                                .h(px(if active { TILE - 12. } else { 8. }))
+                                .rounded_r(px(3.))
+                                .bg(t.ink),
+                        )
+                        .child(
+                            div()
+                                .rounded(px(10.))
+                                .border_2()
+                                .border_color(if active { t.ink.opacity(0.7) } else { hsla(0., 0., 0., 0.) })
+                                .child(tile(&s.site.icon, color, TILE - 4.)),
+                        )
                         .when(s.origin.is_agent(), |d| d.child(div().absolute().left(px(4.)).top(px(0.)).child(icon("bot", 12., t.signal))))
                         .tooltip(move |_, cx| cx.new(|_| Tip(name.clone())).into())
                         .on_click(cx.listener(move |this, _, _, cx| this.activate(&id, cx)))
@@ -366,7 +410,7 @@ impl Workspace {
                     .rounded(px(8.))
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
-                    .tooltip(tip("MCP & Agents"))
+                    .tooltip(tip(tr("MCP & Agents")))
                     .child(icon("bot", 18., t.muted))
                     .child(div().absolute().top(px(6.)).right(px(6.)).size(px(7.)).rounded(px(4.)).bg(if mcp_on { t.ok } else { t.faint }))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -385,7 +429,7 @@ impl Workspace {
                     .rounded(px(8.))
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
-                    .tooltip(tip("Settings"))
+                    .tooltip(tip(tr("Settings")))
                     .child(icon("settings", 18., t.muted))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.view = if this.view == View::Settings { View::Main } else { View::Settings };
@@ -402,7 +446,7 @@ impl Workspace {
         let sessions = self.core.sessions();
         let cfg = self.core.config.lock().clone();
 
-        let item = |label: String, ic: &'static str, danger: bool, cx: &mut Context<Self>, f: Box<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>| {
+        let item = |label: String, ic: &'static str, danger: bool, cx: &mut Context<Self>, f: MenuAction| {
             div()
                 .id(SharedString::from(format!("rm-{label}")))
                 .flex()
@@ -429,55 +473,123 @@ impl Workspace {
         let title: String;
         match &target {
             RailTarget::Site(id) => {
-                let Some(site) = cfg.sites.iter().find(|s| s.id == *id).cloned() else { return None };
+                let site = cfg.sites.iter().find(|s| s.id == *id).cloned()?;
                 title = site.name.clone();
                 let open = sessions.iter().find(|s| s.site.id == *id).map(|s| s.id.clone());
                 let in_folder = cfg.rail.iter().any(|n| matches!(n, RailNode::Folder { sites, .. } if sites.contains(id)));
                 let (i1, i2, i3, i4, i5) = (id.clone(), site.clone(), id.clone(), id.clone(), site.clone());
-                items.push(item(if open.is_some() { "Open".into() } else { "Connect".into() }, "plug-zap", false, cx, Box::new(move |this, _, cx| this.open_site(&i1, cx))));
-                items.push(item("Edit site…".into(), "pencil", false, cx, Box::new(move |this, window, cx| this.open_site_editor(Some(i2.clone()), window, cx))));
-                items.push(item("Icon & color…".into(), "palette", false, cx, Box::new(move |this, _, cx| this.open_icon_picker(i3.clone(), pos, cx))));
+                items.push(item(
+                    if open.is_some() { tr("Open").into() } else { tr("Connect").into() },
+                    "plug-zap",
+                    false,
+                    cx,
+                    Box::new(move |this, _, cx| this.open_site(&i1, cx)),
+                ));
+                items.push(item(
+                    tr("Edit site…").into(),
+                    "pencil",
+                    false,
+                    cx,
+                    Box::new(move |this, window, cx| this.open_site_editor(Some(i2.clone()), window, cx)),
+                ));
+                items.push(item(
+                    tr("Icon & color…").into(),
+                    "palette",
+                    false,
+                    cx,
+                    Box::new(move |this, _, cx| this.open_icon_picker(i3.clone(), pos, cx)),
+                ));
                 if in_folder {
-                    items.push(item("Remove from folder".into(), "folder-input", false, cx, Box::new(move |this, _, cx| {
-                        let id = i4.clone();
-                        this.core.update_config(|c| {
-                            let pos = c.rail.len();
-                            c.move_node(&id, None, pos);
-                        });
-                        cx.notify();
-                    })));
+                    items.push(item(
+                        tr("Remove from folder").into(),
+                        "folder-input",
+                        false,
+                        cx,
+                        Box::new(move |this, _, cx| {
+                            let id = i4.clone();
+                            this.core.update_config(|c| {
+                                let pos = c.rail.len();
+                                c.move_node(&id, None, pos);
+                            });
+                            cx.notify();
+                        }),
+                    ));
                 }
                 if let Some(sid) = open {
-                    items.push(item("Disconnect".into(), "unplug", false, cx, Box::new(move |this, _, cx| this.disconnect(sid.clone(), cx))));
+                    items.push(item(
+                        tr("Disconnect").into(),
+                        "unplug",
+                        false,
+                        cx,
+                        Box::new(move |this, _, cx| this.disconnect(sid.clone(), cx)),
+                    ));
                 }
-                items.push(item("Delete site".into(), "trash-2", true, cx, Box::new(move |this, window, cx| this.confirm_delete_site(i5.clone(), window, cx))));
+                items.push(item(
+                    tr("Delete site").into(),
+                    "trash-2",
+                    true,
+                    cx,
+                    Box::new(move |this, window, cx| this.confirm_delete_site(i5.clone(), window, cx)),
+                ));
             }
             RailTarget::Session(sid) => {
-                let Some(s) = sessions.iter().find(|s| s.id == *sid).cloned() else { return None };
+                let s = sessions.iter().find(|s| s.id == *sid).cloned()?;
                 title = s.site.name.clone();
                 let (site, sid2) = (s.site.clone(), sid.clone());
-                items.push(item("Save as site…".into(), "folder-plus", false, cx, Box::new(move |this, window, cx| this.open_site_editor(Some(site.clone()), window, cx))));
-                items.push(item("Disconnect".into(), "unplug", false, cx, Box::new(move |this, _, cx| this.disconnect(sid2.clone(), cx))));
+                items.push(item(
+                    tr("Save as site…").into(),
+                    "folder-plus",
+                    false,
+                    cx,
+                    Box::new(move |this, window, cx| this.open_site_editor(Some(site.clone()), window, cx)),
+                ));
+                items.push(item(
+                    tr("Disconnect").into(),
+                    "unplug",
+                    false,
+                    cx,
+                    Box::new(move |this, _, cx| this.disconnect(sid2.clone(), cx)),
+                ));
             }
             RailTarget::Folder(fid) => {
-                let Some(RailNode::Folder { name, color, expanded, .. }) = cfg.rail.iter().find(|n| n.id() == fid).cloned() else { return None };
+                let Some(RailNode::Folder { name, color, expanded, .. }) = cfg.rail.iter().find(|n| n.id() == fid).cloned() else {
+                    return None;
+                };
                 title = name.clone();
                 let (f1, f2, f3, n1) = (fid.clone(), fid.clone(), fid.clone(), name.clone());
-                items.push(item(if expanded { "Collapse".into() } else { "Expand".into() }, "folder-open", false, cx, Box::new(move |this, _, cx| {
-                    let f = f1.clone();
-                    this.core.update_config(|c| {
-                        if let Some((_, _, e)) = c.folder_mut(&f) {
-                            *e = !*e;
-                        }
-                    });
-                    cx.notify();
-                })));
-                items.push(item("Rename folder…".into(), "pencil", false, cx, Box::new(move |this, window, cx| this.open_folder_rename(f2.clone(), n1.clone(), window, cx))));
-                items.push(item("Ungroup".into(), "ungroup", false, cx, Box::new(move |this, _, cx| {
-                    let f = f3.clone();
-                    this.core.update_config(|c| c.ungroup(&f));
-                    cx.notify();
-                })));
+                items.push(item(
+                    if expanded { tr("Collapse").into() } else { tr("Expand").into() },
+                    "folder-open",
+                    false,
+                    cx,
+                    Box::new(move |this, _, cx| {
+                        let f = f1.clone();
+                        this.core.update_config(|c| {
+                            if let Some((_, _, e)) = c.folder_mut(&f) {
+                                *e = !*e;
+                            }
+                        });
+                        cx.notify();
+                    }),
+                ));
+                items.push(item(
+                    tr("Rename folder…").into(),
+                    "pencil",
+                    false,
+                    cx,
+                    Box::new(move |this, window, cx| this.open_folder_rename(f2.clone(), n1.clone(), window, cx)),
+                ));
+                items.push(item(
+                    tr("Ungroup").into(),
+                    "ungroup",
+                    false,
+                    cx,
+                    Box::new(move |this, _, cx| {
+                        let f = f3.clone();
+                        this.core.update_config(|c| c.ungroup(&f));
+                        cx.notify();
+                    }),
+                ));
                 // color swatches
                 let fid_c = fid.clone();
                 items.push(
@@ -533,7 +645,16 @@ impl Workspace {
                             this.rail_menu = None;
                             cx.notify();
                         }))
-                        .child(div().px(px(8.)).py(px(4.)).text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).text_color(t.faint).truncate().child(title))
+                        .child(
+                            div()
+                                .px(px(8.))
+                                .py(px(4.))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(t.faint)
+                                .truncate()
+                                .child(title),
+                        )
                         .children(items),
                 ),
             )
@@ -542,7 +663,13 @@ impl Workspace {
     }
 
     fn confirm_delete_site(&mut self, site: Site, window: &mut Window, cx: &mut Context<Self>) {
-        let answer = window.prompt(PromptLevel::Warning, &format!("Delete the site \"{}\"?", site.name), Some("Only the saved connection is removed; no files are touched."), &["Delete", "Cancel"], cx);
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &trf("Delete the site \"{name}\"?", &[("name", &site.name)]),
+            Some(tr("Only the saved connection is removed; no files are touched.")),
+            &[tr("Delete"), tr("Cancel")],
+            cx,
+        );
         cx.spawn(async move |this, cx| {
             if answer.await.ok() == Some(0) {
                 this.update(cx, |this, cx| {
@@ -562,7 +689,11 @@ fn folder_tile(sites: &[Site], color: Hsla, size: f32, t: &Theme) -> gpui::Div {
     let cell = |s: Option<&Site>| match s {
         Some(s) => {
             let c = site_color(&s.color);
-            div().flex().items_center().justify_center().size(px(mini)).rounded(px(4.)).bg(c.opacity(0.3)).child(icon(&s.icon, (mini * 0.6).round(), c))
+            div().flex().items_center().justify_center().size(px(mini)).rounded(px(4.)).bg(c.opacity(0.3)).child(icon(
+                &s.icon,
+                (mini * 0.6).round(),
+                c,
+            ))
         }
         None => div().size(px(mini)).rounded(px(4.)).bg(t.ink.opacity(0.06)),
     };

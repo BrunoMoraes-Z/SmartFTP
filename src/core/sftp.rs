@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
-use russh::client::{self, Handle};
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg, load_secret_key};
 use russh::Disconnect;
+use russh::client::{self, Handle};
 use russh::keys::PublicKeyOrCertificate;
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, load_secret_key};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -23,10 +23,7 @@ fn known_hosts_path() -> std::path::PathBuf {
 }
 
 fn load_known_hosts() -> HashMap<String, String> {
-    std::fs::read_to_string(known_hosts_path())
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+    std::fs::read_to_string(known_hosts_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
 fn save_known_host(key: &str, fp: &str) {
@@ -89,12 +86,9 @@ impl SftpFs {
         let mut authenticated = false;
         if let Some(key_path) = site.key_path.as_deref().filter(|p| !p.is_empty()) {
             let key_path = expand_tilde(key_path);
-            let key = load_secret_key(&key_path, site.password.as_deref())
-                .with_context(|| format!("loading private key {key_path}"))?;
+            let key = load_secret_key(&key_path, site.password.as_deref()).with_context(|| format!("loading private key {key_path}"))?;
             let hash = handle.best_supported_rsa_hash().await?.flatten();
-            let res = handle
-                .authenticate_publickey(site.user.clone(), PrivateKeyWithHashAlg::new(Arc::new(key), hash))
-                .await?;
+            let res = handle.authenticate_publickey(site.user.clone(), PrivateKeyWithHashAlg::new(Arc::new(key), hash)).await?;
             authenticated = res.success();
         }
         if !authenticated && let Some(pw) = site.password.as_deref() {
@@ -212,10 +206,7 @@ impl RemoteFs for SftpFs {
 
     async fn upload(&self, local: &Path, remote: &str, progress: &Progress) -> Result<u64> {
         let mut src = tokio::fs::File::open(local).await?;
-        let mut dst = self
-            .sftp
-            .open_with_flags(remote.to_string(), OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-            .await?;
+        let mut dst = self.sftp.open_with_flags(remote.to_string(), OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE).await?;
         let mut buf = vec![0u8; CHUNK];
         let mut total = 0u64;
         loop {
@@ -251,10 +242,7 @@ impl RemoteFs for SftpFs {
     }
 
     async fn write(&self, remote: &str, data: &[u8]) -> Result<()> {
-        let mut f = self
-            .sftp
-            .open_with_flags(remote.to_string(), OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-            .await?;
+        let mut f = self.sftp.open_with_flags(remote.to_string(), OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE).await?;
         f.write_all(data).await?;
         f.shutdown().await?;
         Ok(())

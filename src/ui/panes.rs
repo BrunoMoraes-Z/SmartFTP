@@ -1,21 +1,24 @@
 use std::collections::HashMap;
 
-use gpui::{
-    Context, ExternalPaths, FontWeight, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px, relative,
-};
+use gpui::{Context, ExternalPaths, FontWeight, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px, relative};
 
 use super::components::*;
 use super::theme::{Theme, theme};
 use super::workspace::{ContextMenu, DraggedFiles, DrawerTab, Side, SortBy, Workspace};
 use crate::core::model::{Entry, Origin, human_size, join_remote};
 use crate::core::{Direction, JobState};
+use crate::i18n::{tr, trf};
 
 impl Workspace {
     pub fn render_main(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let session = self.session();
         let header = self.render_session_header(cx);
         let local = self.render_pane(Side::Local, cx).into_any_element();
-        let remote = if session.is_some() { self.render_pane(Side::Remote, cx).into_any_element() } else { self.render_empty_remote(cx).into_any_element() };
+        let remote = if session.is_some() {
+            self.render_pane(Side::Remote, cx).into_any_element()
+        } else {
+            self.render_empty_remote(cx).into_any_element()
+        };
         let drawer = self.render_drawer(cx);
         let t = theme(cx).clone();
         div()
@@ -45,11 +48,19 @@ impl Workspace {
                     div()
                         .flex()
                         .flex_col()
-                        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Not connected"))
-                        .child(div().text_size(px(11.)).text_color(t.faint).child("Pick a site on the left, paste a URL into quick connect, or let an agent connect over MCP.")),
+                        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(tr("Not connected")))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(t.faint)
+                                .child(tr("Pick a site on the left, paste a URL into quick connect, or let an agent connect over MCP.")),
+                        ),
                 )
                 .child(div().flex_1())
-                .child(button("hdr-new", "New site", Some("plus"), BtnKind::Primary, cx).on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))));
+                .child(
+                    button("hdr-new", tr("New site"), Some("plus"), BtnKind::Primary, cx)
+                        .on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))),
+                );
         };
         let (ic, col) = self.identity(&s.site);
         let color = site_color(&col);
@@ -57,7 +68,7 @@ impl Workspace {
         let id = s.id.clone();
         let mut meta = format!("{} · {}", s.site.address(), s.site.protocol.label());
         if let Origin::Agent(name) = &s.origin {
-            meta.push_str(&format!(" · opened by {name}"));
+            meta.push_str(&format!(" · {}", trf("opened by {agent}", &[("agent", name)])));
         }
         base.child(tile(&ic, color, 32.))
             .child(
@@ -88,11 +99,20 @@ impl Workspace {
                     .child(div().text_size(px(11.)).text_color(t.faint).font_family(super::MONO_FONT).truncate().child(meta)),
             )
             .child(div().flex_1())
-            .child(button("hdr-refresh", "Refresh", Some("rotate-cw"), BtnKind::Outline, cx).on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx))))
+            .child(
+                button("hdr-refresh", tr("Refresh"), Some("rotate-cw"), BtnKind::Outline, cx)
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx))),
+            )
             .when_some(saved, |d, site| {
-                d.child(button("hdr-edit", "Edit site", Some("pencil"), BtnKind::Outline, cx).on_click(cx.listener(move |this, _, window, cx| this.open_site_editor(Some(site.clone()), window, cx))))
+                d.child(
+                    button("hdr-edit", tr("Edit site"), Some("pencil"), BtnKind::Outline, cx)
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_site_editor(Some(site.clone()), window, cx))),
+                )
             })
-            .child(button("hdr-disconnect", "Disconnect", Some("unplug"), BtnKind::Outline, cx).on_click(cx.listener(move |this, _, _, cx| this.disconnect(id.clone(), cx))))
+            .child(
+                button("hdr-disconnect", tr("Disconnect"), Some("unplug"), BtnKind::Outline, cx)
+                    .on_click(cx.listener(move |this, _, _, cx| this.disconnect(id.clone(), cx))),
+            )
     }
 
     fn render_empty_remote(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -107,8 +127,8 @@ impl Workspace {
             .gap(px(14.))
             .p(px(24.))
             .child(icon("cloud", 32., t.faint))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("No remote connected"))
-            .child(div().text_size(px(12.)).text_color(t.muted).max_w(px(340.)).text_center().child("Connect to a site to see its files here. Then click → / ← on any row, double-click a file, or drag files between the two sides."))
+            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(tr("No remote connected")))
+            .child(div().text_size(px(12.)).text_color(t.muted).max_w(px(340.)).text_center().child(tr("Connect to a site to see its files here. Then click → / ← on any row, double-click a file, or drag files between the two sides.")))
             .child(
                 div().flex().flex_col().gap(px(4.)).w(px(300.)).children(sites.into_iter().take(6).map(|site| {
                     let s = site.clone();
@@ -130,7 +150,7 @@ impl Workspace {
                         .on_click(cx.listener(move |this, _, _, cx| this.connect_site(s.clone(), cx)))
                 })),
             )
-            .child(button("empty-new", "New site", Some("plus"), BtnKind::Primary, cx).on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))))
+            .child(button("empty-new", tr("New site"), Some("plus"), BtnKind::Primary, cx).on_click(cx.listener(|this, _, window, cx| this.open_site_editor(None, window, cx))))
     }
 
     pub fn render_pane(&mut self, side: Side, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -181,7 +201,12 @@ impl Workspace {
             .border_b_1()
             .border_color(t.border)
             .child(match side {
-                Side::Local => div().flex().items_center().gap(px(8.)).child(icon("laptop", 15., t.muted)).child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(t.muted).child("This computer")),
+                Side::Local => div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(icon("laptop", 15., t.muted))
+                    .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(t.muted).child(tr("This computer"))),
                 Side::Remote => div()
                     .flex()
                     .items_center()
@@ -212,7 +237,7 @@ impl Workspace {
                     .rounded(px(5.))
                     .bg(t.surface)
                     .cursor_text()
-                    .tooltip(tip("Click to type a path (Ctrl+L)"))
+                    .tooltip(tip(tr("Click to type a path (Ctrl+L)")))
                     .on_click(cx.listener(move |this, _, window, cx| this.start_path_edit(side, window, cx)))
                     .overflow_x_scroll()
                     .font_family(super::MONO_FONT)
@@ -243,33 +268,37 @@ impl Workspace {
             .when(side == Side::Local, |d| {
                 d.child(
                     icon_button("browse-local", "folder-open", cx)
-                        .tooltip(tip("Choose a folder…"))
+                        .tooltip(tip(tr("Choose a folder…")))
                         .on_click(cx.listener(|this, _, window, cx| this.browse_local_folder(window, cx))),
                 )
             })
-            .child(icon_button(SharedString::from(format!("up-{tag}")), "arrow-up", cx).tooltip(tip("Parent folder (Backspace)")).on_click(cx.listener(move |this, _, _, cx| this.go_up(side, cx))))
             .child(
-                icon_button(SharedString::from(format!("refresh-{tag}")), "rotate-cw", cx).tooltip(tip("Refresh (F5)")).on_click(cx.listener(move |this, _, _, cx| match side {
+                icon_button(SharedString::from(format!("up-{tag}")), "arrow-up", cx)
+                    .tooltip(tip(tr("Parent folder (Backspace)")))
+                    .on_click(cx.listener(move |this, _, _, cx| this.go_up(side, cx))),
+            )
+            .child(icon_button(SharedString::from(format!("refresh-{tag}")), "rotate-cw", cx).tooltip(tip(tr("Refresh (F5)"))).on_click(
+                cx.listener(move |this, _, _, cx| match side {
                     Side::Local => this.load_local(cx),
                     Side::Remote => {
                         if let Some(id) = this.active.clone() {
                             this.load_remote(&id, cx)
                         }
                     }
-                })),
-            )
+                }),
+            ))
+            .child(icon_button(SharedString::from(format!("mkdir-{tag}")), "folder-plus", cx).tooltip(tip(tr("New folder (F7)"))).on_click(
+                cx.listener(move |this, _, window, cx| this.open_prompt(super::dialogs::PromptKind::NewFolder, side, None, window, cx)),
+            ))
             .child(
-                icon_button(SharedString::from(format!("mkdir-{tag}")), "folder-plus", cx)
-                    .tooltip(tip("New folder (F7)"))
-                    .on_click(cx.listener(move |this, _, window, cx| this.open_prompt(super::dialogs::PromptKind::NewFolder, side, None, window, cx))),
-            )
-            .child(
-                icon_button(SharedString::from(format!("hidden-{tag}")), if show_hidden { "eye" } else { "eye-off" }, cx).tooltip(tip("Show / hide dotfiles")).on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(p) = this.pane_mut(side) {
-                        p.show_hidden = !p.show_hidden;
-                    }
-                    cx.notify();
-                })),
+                icon_button(SharedString::from(format!("hidden-{tag}")), if show_hidden { "eye" } else { "eye-off" }, cx)
+                    .tooltip(tip(tr("Show / hide dotfiles")))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(p) = this.pane_mut(side) {
+                            p.show_hidden = !p.show_hidden;
+                        }
+                        cx.notify();
+                    })),
             );
 
         // ---------- column header
@@ -308,10 +337,10 @@ impl Workspace {
             .px(px(12.))
             .text_size(px(11.))
             .when(side == Side::Remote, |d| d.pl(px(44.)))
-            .child(col("Name", SortBy::Name, None, false, cx))
-            .child(col("Size", SortBy::Size, Some(72.), true, cx))
-            .child(col("Modified", SortBy::Modified, Some(84.), true, cx))
-            .when(side == Side::Remote, |d| d.child(div().w(px(84.)).flex_none().text_color(t.faint).child("Perms")))
+            .child(col(tr("Name"), SortBy::Name, None, false, cx))
+            .child(col(tr("Size"), SortBy::Size, Some(72.), true, cx))
+            .child(col(tr("Modified"), SortBy::Modified, Some(84.), true, cx))
+            .when(side == Side::Remote, |d| d.child(div().w(px(84.)).flex_none().text_color(t.faint).child(tr("Perms"))))
             .when(side == Side::Local, |d| d.child(div().w(px(24.)).flex_none()));
 
         // ---------- rows
@@ -333,18 +362,20 @@ impl Workspace {
             );
         }
         if rows.is_empty() && error.is_none() {
-            list = list.child(
-                div().flex().justify_center().py(px(24.)).text_size(px(12.)).text_color(t.faint).child(if loading { "Loading…" } else { "This folder is empty" }),
-            );
+            list = list.child(div().flex().justify_center().py(px(24.)).text_size(px(12.)).text_color(t.faint).child(if loading {
+                tr("Loading…")
+            } else {
+                tr("This folder is empty")
+            }));
         }
         for (ix, e) in rows.into_iter().enumerate() {
             let is_sel = selected.contains(&e.name);
             let badge = if compare && !e.is_dir {
                 match other.get(&e.name) {
-                    None => Some(("only here", t.faint)),
+                    None => Some((tr("only here"), t.faint)),
                     Some((m, false)) => match (e.modified, m) {
-                        (Some(a), Some(b)) if a > b + time_tolerance(a, *b) => Some(("▲ newer", t.signal)),
-                        (Some(a), Some(b)) if a + time_tolerance(a, *b) < *b => Some(("older", t.faint)),
+                        (Some(a), Some(b)) if a > b + time_tolerance(a, *b) => Some((tr("▲ newer"), t.signal)),
+                        (Some(a), Some(b)) if a + time_tolerance(a, *b) < *b => Some((tr("older"), t.faint)),
                         _ => None,
                     },
                     _ => None,
@@ -358,7 +389,7 @@ impl Workspace {
             let entry_menu = e.clone();
             let name_send = e.name.clone();
             let drag_paths: Vec<String> = if is_sel { sel_entries.iter().map(|x| x.path.clone()).collect() } else { vec![e.path.clone()] };
-            let drag_label = if drag_paths.len() > 1 { format!("{} items", drag_paths.len()) } else { e.name.clone() };
+            let drag_label = if drag_paths.len() > 1 { trf("{n} items", &[("n", &drag_paths.len().to_string())]) } else { e.name.clone() };
             let drag = DraggedFiles { side, paths: drag_paths, label: drag_label };
             let folder_target = e.is_dir.then(|| e.path.clone());
             let ic = file_icon(&e.name, e.is_dir, e.is_symlink);
@@ -378,8 +409,8 @@ impl Workspace {
                     .hover(|s| s.bg(t.hover))
                     .when(session.is_some(), |d| d.child(icon(ic, 14., t.ink)))
                     .tooltip(tip(match side {
-                        Side::Local => "Upload to the remote folder",
-                        Side::Remote => "Download to the local folder",
+                        Side::Local => tr("Upload to the remote folder"),
+                        Side::Remote => tr("Download to the local folder"),
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -404,11 +435,48 @@ impl Workspace {
                 .cursor_pointer()
                 .when(side == Side::Remote, |d| d.child(send_btn(format!("dl-{ix}"), "arrow-left", cx)))
                 .child(icon(ic, 15., if e.is_dir { t.folder } else { t.muted }))
-                .child(div().flex_1().min_w_0().truncate().font_weight(if e.is_dir { FontWeight::MEDIUM } else { FontWeight::NORMAL }).child(name))
-                .when_some(badge, |d, (b, c)| d.child(div().flex_none().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(c).child(b)))
-                .child(div().w(px(72.)).flex_none().text_right().text_size(px(12.)).text_color(t.muted).font_family(super::MONO_FONT).child(if e.is_dir { "—".to_string() } else { human_size(e.size) }))
-                .child(div().w(px(84.)).flex_none().text_right().text_size(px(12.)).text_color(t.faint).font_family(super::MONO_FONT).child(format_time(e.modified)))
-                .when(side == Side::Remote, |d| d.child(div().w(px(84.)).flex_none().text_size(px(11.)).text_color(t.faint).font_family(super::MONO_FONT).child(e.permissions.clone().unwrap_or_default())))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(if e.is_dir { FontWeight::MEDIUM } else { FontWeight::NORMAL })
+                        .child(name),
+                )
+                .when_some(badge, |d, (b, c)| {
+                    d.child(div().flex_none().text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(c).child(b))
+                })
+                .child(
+                    div()
+                        .w(px(72.))
+                        .flex_none()
+                        .text_right()
+                        .text_size(px(12.))
+                        .text_color(t.muted)
+                        .font_family(super::MONO_FONT)
+                        .child(if e.is_dir { "—".to_string() } else { human_size(e.size) }),
+                )
+                .child(
+                    div()
+                        .w(px(84.))
+                        .flex_none()
+                        .text_right()
+                        .text_size(px(12.))
+                        .text_color(t.faint)
+                        .font_family(super::MONO_FONT)
+                        .child(format_time(e.modified)),
+                )
+                .when(side == Side::Remote, |d| {
+                    d.child(
+                        div()
+                            .w(px(84.))
+                            .flex_none()
+                            .text_size(px(11.))
+                            .text_color(t.faint)
+                            .font_family(super::MONO_FONT)
+                            .child(e.permissions.clone().unwrap_or_default()),
+                    )
+                })
                 .when(side == Side::Local, |d| d.child(send_btn(format!("ul-{ix}"), "arrow-right", cx)))
                 .on_click(cx.listener(move |this, ev, window, cx| this.click_row(side, name_click.clone(), ev, window, cx)))
                 .on_mouse_down(
@@ -441,26 +509,39 @@ impl Workspace {
 
         // ---------- footer
         let sel_size: u64 = sel_entries.iter().map(|e| e.size).sum();
-        let footer = div().flex().flex_none().items_center().gap(px(10.)).h(px(46.)).px(px(12.)).bg(t.surface).border_t_1().border_color(t.border);
+        let footer =
+            div().flex().flex_none().items_center().gap(px(10.)).h(px(46.)).px(px(12.)).bg(t.surface).border_t_1().border_color(t.border);
         let footer = if !sel_entries.is_empty() && session.is_some() {
             let label = match side {
-                Side::Local => format!("Upload to {remote_dir}"),
-                Side::Remote => format!("Download to {}", shorten(&local_dir, 34)),
+                Side::Local => trf("Upload to {path}", &[("path", &remote_dir)]),
+                Side::Remote => trf("Download to {path}", &[("path", &shorten(&local_dir, 34))]),
             };
             footer
-                .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(format!("{} selected", sel_entries.len())))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(trf("{n} selected", &[("n", &sel_entries.len().to_string())])),
+                )
                 .child(div().text_size(px(12.)).text_color(t.faint).font_family(super::MONO_FONT).child(human_size(sel_size)))
                 .child(div().flex_1())
-                .child(
-                    button(SharedString::from(format!("clear-{tag}")), "Clear", None, BtnKind::Outline, cx).on_click(cx.listener(move |this, _, _, cx| {
+                .child(button(SharedString::from(format!("clear-{tag}")), tr("Clear"), None, BtnKind::Outline, cx).on_click(cx.listener(
+                    move |this, _, _, cx| {
                         if let Some(p) = this.pane_mut(side) {
                             p.selected.clear();
                         }
                         cx.notify();
-                    })),
-                )
+                    },
+                )))
                 .child(
-                    button(SharedString::from(format!("send-{tag}")), label, Some(if side == Side::Local { "arrow-right" } else { "arrow-left" }), BtnKind::Primary, cx).on_click(cx.listener(move |this, _, _, cx| {
+                    button(
+                        SharedString::from(format!("send-{tag}")),
+                        label,
+                        Some(if side == Side::Local { "arrow-right" } else { "arrow-left" }),
+                        BtnKind::Primary,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         let paths = this.targets(side, None).into_iter().map(|e| e.path).collect();
                         this.transfer(side, paths, None, cx);
                     })),
@@ -468,10 +549,16 @@ impl Workspace {
         } else {
             let count = self.pane(side).map(|p| p.entries.len()).unwrap_or(0);
             footer
-                .child(div().text_size(px(12.)).text_color(t.faint).child(format!("{count} items")))
+                .child(div().text_size(px(12.)).text_color(t.faint).child(trf("{n} items", &[("n", &count.to_string())])))
                 .child(div().flex_1())
                 .when(session.is_some(), |d| {
-                    d.child(icon("info", 13., t.faint)).child(div().text_size(px(12.)).text_color(t.faint).truncate().child("Click → / ← on a row, double-click, or drag between panes"))
+                    d.child(icon("info", 13., t.faint)).child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(t.faint)
+                            .truncate()
+                            .child(tr("Click → / ← on a row, double-click, or drag between panes")),
+                    )
                 })
         };
 
@@ -516,7 +603,7 @@ impl Workspace {
             self.transfer(d.side, d.paths, Some(target), cx);
             return;
         }
-        if d.paths.iter().any(|p| *p == target) {
+        if d.paths.contains(&target) {
             return;
         }
         match side {
@@ -546,7 +633,7 @@ impl Workspace {
                     },
                     move |this, r, cx| {
                         if let Err(e) = r {
-                            this.toast(format!("Move failed: {e:#}"), true);
+                            this.toast(trf("Move failed: {error}", &[("error", &format!("{e:#}"))]), true);
                         }
                         this.load_remote(&sid, cx);
                     },
@@ -559,9 +646,12 @@ impl Workspace {
         let t = theme(cx).clone();
         let jobs = self.core.jobs();
         let active: Vec<_> = jobs.iter().filter(|j| !j.state.lock().finished()).cloned().collect();
-        let done: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Done | JobState::Cancelled | JobState::Skipped)).cloned().collect();
+        let done: Vec<_> =
+            jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Done | JobState::Cancelled | JobState::Skipped)).cloned().collect();
         let failed: Vec<_> = jobs.iter().filter(|j| matches!(*j.state.lock(), JobState::Failed(_))).cloned().collect();
-        let running = |d: Direction| -> f64 { jobs.iter().filter(|j| j.direction == d && matches!(*j.state.lock(), JobState::Running)).map(|j| j.speed()).sum() };
+        let running = |d: Direction| -> f64 {
+            jobs.iter().filter(|j| j.direction == d && matches!(*j.state.lock(), JobState::Running)).map(|j| j.speed()).sum()
+        };
         let (up, down) = (running(Direction::Upload), running(Direction::Download));
         let open = self.drawer_open;
         let tab = self.drawer_tab;
@@ -600,20 +690,32 @@ impl Workspace {
                     .gap(px(8.))
                     .cursor_pointer()
                     .child(icon(if open { "chevron-down" } else { "chevron-right" }, 14., t.muted))
-                    .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child("Transfers"))
+                    .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(tr("Transfers")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.drawer_open = !this.drawer_open;
                         cx.notify();
                     })),
             )
-            .child(tab_btn(format!("Active {}", active.len()), DrawerTab::Active, cx))
-            .child(tab_btn(format!("Done {}", done.len()), DrawerTab::Done, cx))
-            .child(tab_btn(format!("Failed {}", failed.len()), DrawerTab::Failed, cx))
-            .child(tab_btn("Activity".into(), DrawerTab::Log, cx))
+            .child(tab_btn(trf("Active {n}", &[("n", &active.len().to_string())]), DrawerTab::Active, cx))
+            .child(tab_btn(trf("Done {n}", &[("n", &done.len().to_string())]), DrawerTab::Done, cx))
+            .child(tab_btn(trf("Failed {n}", &[("n", &failed.len().to_string())]), DrawerTab::Failed, cx))
+            .child(tab_btn(tr("Activity").into(), DrawerTab::Log, cx))
             .child(div().flex_1())
-            .child(div().text_size(px(12.)).font_family(super::MONO_FONT).text_color(if up > 0. { t.signal } else { t.faint }).child(format!("↑ {}/s", human_size(up as u64))))
-            .child(div().text_size(px(12.)).font_family(super::MONO_FONT).text_color(if down > 0. { t.ink } else { t.faint }).child(format!("↓ {}/s", human_size(down as u64))))
-            .child(button("clear-done", "Clear finished", None, BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .font_family(super::MONO_FONT)
+                    .text_color(if up > 0. { t.signal } else { t.faint })
+                    .child(format!("↑ {}/s", human_size(up as u64))),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .font_family(super::MONO_FONT)
+                    .text_color(if down > 0. { t.ink } else { t.faint })
+                    .child(format!("↓ {}/s", human_size(down as u64))),
+            )
+            .child(button("clear-done", tr("Clear finished"), None, BtnKind::Ghost, cx).on_click(cx.listener(|this, _, _, cx| {
                 this.core.clear_finished_jobs();
                 cx.notify();
             })));
@@ -629,7 +731,7 @@ impl Workspace {
                     .overflow_y_scroll()
                     .px(px(14.))
                     .pb(px(8.))
-                    .when(log.is_empty(), |d| d.child(div().py(px(12.)).text_size(px(12.)).text_color(t.faint).child("Nothing yet")))
+                    .when(log.is_empty(), |d| d.child(div().py(px(12.)).text_size(px(12.)).text_color(t.faint).child(tr("Nothing yet"))))
                     .children(log.into_iter().take(200).map(|l| {
                         div()
                             .flex()
@@ -637,7 +739,14 @@ impl Workspace {
                             .gap(px(14.))
                             .h(px(24.))
                             .text_size(px(12.))
-                            .child(div().w(px(64.)).flex_none().font_family(super::MONO_FONT).text_color(t.faint).child(l.time.format("%H:%M:%S").to_string()))
+                            .child(
+                                div()
+                                    .w(px(64.))
+                                    .flex_none()
+                                    .font_family(super::MONO_FONT)
+                                    .text_color(t.faint)
+                                    .child(l.time.format("%H:%M:%S").to_string()),
+                            )
                             .child(
                                 div()
                                     .w(px(96.))
@@ -647,11 +756,19 @@ impl Workspace {
                                     .gap(px(4.))
                                     .when(l.origin.is_agent(), |d| d.child(icon("bot", 12., t.signal)))
                                     .text_color(if l.origin.is_agent() { t.signal } else { t.muted })
-                                    .child(l.origin.label()),
+                                    .child(if l.origin.is_agent() { l.origin.label() } else { tr("you").to_string() }),
                             )
                             .child(div().w(px(90.)).flex_none().font_family(super::MONO_FONT).child(l.action.clone()))
-                            .child(div().flex_1().min_w_0().truncate().font_family(super::MONO_FONT).text_color(t.muted).child(l.target.clone()))
-                            .child(status_pill(if l.ok { "ok" } else { "error" }, l.ok, &t))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_family(super::MONO_FONT)
+                                    .text_color(t.muted)
+                                    .child(l.target.clone()),
+                            )
+                            .child(status_pill(if l.ok { tr("ok") } else { tr("error") }, l.ok, &t))
                             .when(!l.ok, |d| d.child(div().max_w(px(320.)).truncate().text_color(t.err).child(l.detail.clone())))
                     })),
             )
@@ -670,15 +787,19 @@ impl Workspace {
                     .pb(px(8.))
                     .when(list.is_empty(), |d| {
                         d.child(div().py(px(12.)).text_size(px(12.)).text_color(t.faint).child(match tab {
-                            DrawerTab::Active => "No active transfers. Select files and press → or ←, or drag them across.",
-                            DrawerTab::Done => "Finished transfers show up here.",
-                            _ => "No failures.",
+                            DrawerTab::Active => tr("No active transfers. Select files and press → or ←, or drag them across."),
+                            DrawerTab::Done => tr("Finished transfers show up here."),
+                            _ => tr("No failures."),
                         }))
                     })
                     .children(list.into_iter().map(|j| {
                         let st = j.state.lock().clone();
                         let up = j.direction == Direction::Upload;
-                        let route = if up { format!("{} → {}:{}", shorten(&j.local.to_string_lossy(), 40), j.session_name, j.remote) } else { format!("{}:{} → {}", j.session_name, j.remote, shorten(&j.local.to_string_lossy(), 40)) };
+                        let route = if up {
+                            format!("{} → {}:{}", shorten(&j.local.to_string_lossy(), 40), j.session_name, j.remote)
+                        } else {
+                            format!("{}:{} → {}", j.session_name, j.remote, shorten(&j.local.to_string_lossy(), 40))
+                        };
                         let frac = j.fraction();
                         let id = j.id;
                         let bar_color = match &st {
@@ -700,28 +821,63 @@ impl Workspace {
                                     .text_size(px(12.))
                                     .child(icon(if up { "arrow-up" } else { "arrow-down" }, 13., if up { t.signal } else { t.muted }))
                                     .child(div().flex_none().font_weight(FontWeight::MEDIUM).child(j.name.clone()))
-                                    .child(div().flex_1().min_w_0().truncate().text_size(px(11.)).text_color(t.faint).font_family(super::MONO_FONT).child(route))
-                                    .when(j.origin.is_agent(), |d| d.child(div().flex().items_center().gap(px(4.)).text_size(px(11.)).text_color(t.signal).child(icon("bot", 12., t.signal)).child(j.origin.label())))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(11.))
+                                            .text_color(t.faint)
+                                            .font_family(super::MONO_FONT)
+                                            .child(route),
+                                    )
+                                    .when(j.origin.is_agent(), |d| {
+                                        d.child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(4.))
+                                                .text_size(px(11.))
+                                                .text_color(t.signal)
+                                                .child(icon("bot", 12., t.signal))
+                                                .child(j.origin.label()),
+                                        )
+                                    })
                                     .child(div().text_size(px(11.)).text_color(t.muted).font_family(super::MONO_FONT).child(match &st {
                                         JobState::Running => format!("{}/s", human_size(j.speed() as u64)),
-                                        JobState::Queued => "queued".into(),
+                                        JobState::Queued => tr("queued").into(),
                                         JobState::Done => human_size(j.total.max(j.done_bytes())),
-                                        JobState::Cancelled => "cancelled".into(),
-                                        JobState::Skipped => "skipped (already exists)".into(),
+                                        JobState::Cancelled => tr("cancelled").into(),
+                                        JobState::Skipped => tr("skipped (already exists)").into(),
                                         JobState::Failed(e) => shorten(e, 60),
                                     }))
-                                    .child(div().w(px(36.)).text_right().text_size(px(11.)).font_family(super::MONO_FONT).child(format!("{:.0}%", frac * 100.)))
+                                    .child(
+                                        div()
+                                            .w(px(36.))
+                                            .text_right()
+                                            .text_size(px(11.))
+                                            .font_family(super::MONO_FONT)
+                                            .child(format!("{:.0}%", frac * 100.)),
+                                    )
                                     .child(match &st {
-                                        JobState::Failed(_) | JobState::Cancelled => icon_button(SharedString::from(format!("retry-{id}")), "rotate-cw", cx).on_click(cx.listener(move |this, _, _, cx| {
-                                            this.core.retry_job(id);
-                                            this.drawer_tab = DrawerTab::Active;
-                                            cx.notify();
-                                        })),
-                                        JobState::Done | JobState::Skipped => icon_button(SharedString::from(format!("ok-{id}")), "check", cx),
-                                        _ => icon_button(SharedString::from(format!("cancel-{id}")), "x", cx).on_click(cx.listener(move |this, _, _, cx| {
-                                            this.core.cancel_job(id);
-                                            cx.notify();
-                                        })),
+                                        JobState::Failed(_) | JobState::Cancelled => {
+                                            icon_button(SharedString::from(format!("retry-{id}")), "rotate-cw", cx).on_click(cx.listener(
+                                                move |this, _, _, cx| {
+                                                    this.core.retry_job(id);
+                                                    this.drawer_tab = DrawerTab::Active;
+                                                    cx.notify();
+                                                },
+                                            ))
+                                        }
+                                        JobState::Done | JobState::Skipped => {
+                                            icon_button(SharedString::from(format!("ok-{id}")), "check", cx)
+                                        }
+                                        _ => icon_button(SharedString::from(format!("cancel-{id}")), "x", cx).on_click(cx.listener(
+                                            move |this, _, _, cx| {
+                                                this.core.cancel_job(id);
+                                                cx.notify();
+                                            },
+                                        )),
                                     }),
                             )
                             .child(div().w_full().h(px(2.)).bg(t.border).child(div().h_full().w(relative(frac)).bg(bar_color)))
@@ -744,7 +900,15 @@ pub fn tip(text: &'static str) -> impl Fn(&mut Window, &mut gpui::App) -> gpui::
 
 /// FTP LIST output only has minute (recent files) or day (older files) precision.
 fn time_tolerance(a: i64, b: i64) -> i64 {
-    let coarse = |t: i64| if t % 86400 == 0 { 86400 } else if t % 60 == 0 { 60 } else { 2 };
+    let coarse = |t: i64| {
+        if t % 86400 == 0 {
+            86400
+        } else if t % 60 == 0 {
+            60
+        } else {
+            2
+        }
+    };
     coarse(a).max(coarse(b))
 }
 
@@ -774,7 +938,10 @@ fn breadcrumbs(side: Side, path: &str) -> Vec<(String, String)> {
             let mut out: Vec<(String, String)> = p
                 .ancestors()
                 .map(|a| {
-                    let label = a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| a.to_string_lossy().trim_end_matches(['\\', '/']).to_string());
+                    let label = a
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| a.to_string_lossy().trim_end_matches(['\\', '/']).to_string());
                     (label, a.to_string_lossy().to_string())
                 })
                 .filter(|(l, _)| !l.is_empty())

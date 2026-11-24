@@ -8,6 +8,7 @@ pub mod settings;
 pub mod settings_pages;
 pub mod theme;
 pub mod titlebar;
+pub mod updates;
 pub mod workspace;
 
 use std::sync::Arc;
@@ -34,6 +35,7 @@ pub fn run(core: Arc<Core>) {
         input::bind_keys(cx);
         workspace::bind_keys(cx);
         let cfg = core.config.lock().clone();
+        crate::i18n::set_lang(crate::i18n::resolve(&cfg.interface.language));
         cx.set_global(theme::Themes::load(&cfg, theme::Appearance::Dark));
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         let window = cx

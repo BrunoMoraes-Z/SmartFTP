@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use gpui::{
-    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
-    Pixels, Point, PromptLevel, SharedString, Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
+    App, BorrowAppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Pixels, Point, PromptLevel,
+    SharedString, Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
 };
 
 use super::components::*;
@@ -18,6 +18,7 @@ use super::theme::{Themes, appearance_of, theme};
 use crate::core::model::{Entry, Origin, Site, join_remote, parent_remote};
 use crate::core::remote::{list_local, sort_entries};
 use crate::core::{Core, Direction, JobState, Session};
+use crate::i18n::{tr, trf};
 
 actions!(workspace, [DeleteSelected, OpenSelected, GoUp, Refresh, RenameSelected, SelectAllRows, Dismiss, NewFolder, EditPath]);
 
@@ -137,12 +138,10 @@ impl Render for DraggedFiles {
             .text_color(t.ink)
             .child(icon(if self.paths.len() > 1 { "copy" } else { "file" }, 14., t.ink))
             .child(self.label.clone())
-            .child(
-                div().text_color(t.muted).font_weight(FontWeight::NORMAL).child(match self.side {
-                    Side::Local => "→ remote",
-                    Side::Remote => "→ local",
-                }),
-            )
+            .child(div().text_color(t.muted).font_weight(FontWeight::NORMAL).child(match self.side {
+                Side::Local => tr("→ remote"),
+                Side::Remote => tr("→ local"),
+            }))
     }
 }
 
@@ -197,6 +196,7 @@ pub struct Workspace {
     pub rail_menu: Option<super::rail::RailMenu>,
     pub path_edit: Option<PathEdit>,
     pub last_side: Side,
+    pub update: super::updates::UpdateState,
     last_version: u64,
     seen_jobs: HashSet<u64>,
     last_log: Option<chrono::DateTime<chrono::Local>>,
@@ -243,6 +243,7 @@ impl Workspace {
             rail_menu: None,
             path_edit: None,
             last_side: Side::Local,
+            update: super::updates::UpdateState::Idle,
             last_version: 0,
             seen_jobs: HashSet::new(),
             last_log: None,
@@ -251,6 +252,9 @@ impl Workspace {
         };
         ws.local.show_hidden = ws.core.config.lock().interface.show_hidden;
         ws.load_local(cx);
+        if ws.core.config.lock().interface.check_updates {
+            ws.check_for_updates(false, cx);
+        }
         // Poll the shared core for changes made by transfers or MCP agents.
         cx.spawn(async move |this, cx| {
             loop {
@@ -287,7 +291,7 @@ impl Workspace {
             if !self.known_sessions.contains(&s.id) {
                 self.known_sessions.insert(s.id.clone());
                 if s.origin.is_agent() {
-                    self.toast(format!("{} opened a session to {}", s.origin.label(), s.site.name), false);
+                    self.toast(trf("{agent} opened a session to {site}", &[("agent", &s.origin.label()), ("site", &s.site.name)]), false);
                 }
                 if self.active.is_none() {
                     self.activate(&s.id, cx);
@@ -326,7 +330,7 @@ impl Workspace {
                     }
                 }
                 if let JobState::Failed(e) = &st {
-                    self.toast(format!("{} failed: {e}", j.name), true);
+                    self.toast(trf("{name} failed: {error}", &[("name", &j.name), ("error", e)]), true);
                 }
             }
         }
@@ -461,7 +465,7 @@ impl Workspace {
         match side {
             Side::Local => {
                 if !std::path::Path::new(&path).is_dir() {
-                    self.toast(format!("{path} is not a folder"), true);
+                    self.toast(trf("{path} is not a folder", &[("path", &path)]), true);
                     return;
                 }
                 self.local.path = path.clone();
@@ -541,7 +545,7 @@ impl Workspace {
                     this.known_sessions.insert(s.id.clone());
                     this.activate(&s.id.clone(), cx);
                 }
-                Err(e) => this.toast(format!("Could not connect to {name}: {e:#}"), true),
+                Err(e) => this.toast(trf("Could not connect to {site}: {error}", &[("site", &name), ("error", &format!("{e:#}"))]), true),
             }
         });
         cx.notify();
@@ -550,7 +554,7 @@ impl Workspace {
     pub fn quick_connect(&mut self, url: &str, cx: &mut Context<Self>) {
         match Site::from_url(url) {
             Some(site) => self.connect_site(site, cx),
-            None => self.toast("Use a URL like sftp://user:password@host:22/path", true),
+            None => self.toast(tr("Use a URL like sftp://user:password@host:22/path"), true),
         }
     }
 
@@ -628,7 +632,7 @@ impl Workspace {
             return;
         }
         let Some(session) = self.session() else {
-            self.toast("Connect to a site first", true);
+            self.toast(tr("Connect to a site first"), true);
             return;
         };
         let core = self.core.clone();
@@ -643,7 +647,7 @@ impl Workspace {
                 let locals = paths.into_iter().map(PathBuf::from).collect();
                 self.run(cx, async move { core.upload(&session, locals, &dir, Origin::User).await }, move |this, r, _| {
                     if let Err(e) = r {
-                        this.toast(format!("Upload failed: {e:#}"), true);
+                        this.toast(trf("Upload failed: {error}", &[("error", &format!("{e:#}"))]), true);
                     } else if let Some(p) = this.pane_mut(Side::Local) {
                         p.selected.clear();
                     }
@@ -654,7 +658,7 @@ impl Workspace {
                 let dir = PathBuf::from(into.unwrap_or_else(|| self.local.path.clone()));
                 self.run(cx, async move { core.download(&session, paths, &dir, Origin::User).await }, move |this, r, _| {
                     if let Err(e) = r {
-                        this.toast(format!("Download failed: {e:#}"), true);
+                        this.toast(trf("Download failed: {error}", &[("error", &format!("{e:#}"))]), true);
                     } else if let Some(p) = this.pane_mut(Side::Remote) {
                         p.selected.clear();
                     }
@@ -674,16 +678,20 @@ impl Workspace {
             self.do_delete(side, entries, cx);
             return;
         }
-        let what = if entries.len() == 1 { format!("\"{}\"", entries[0].name) } else { format!("{} items", entries.len()) };
-        let where_ = match side {
-            Side::Local => "from this computer".to_string(),
-            Side::Remote => format!("from {}", self.session().map(|s| s.site.name.clone()).unwrap_or_default()),
+        let site = self.session().map(|s| s.site.name.clone()).unwrap_or_default();
+        let n = entries.len().to_string();
+        let one = entries[0].name.clone();
+        let message = match (entries.len() == 1, side) {
+            (true, Side::Local) => trf("Delete \"{name}\" from this computer?", &[("name", &one)]),
+            (true, Side::Remote) => trf("Delete \"{name}\" from {site}?", &[("name", &one), ("site", &site)]),
+            (false, Side::Local) => trf("Delete {n} items from this computer?", &[("n", &n)]),
+            (false, Side::Remote) => trf("Delete {n} items from {site}?", &[("n", &n), ("site", &site)]),
         };
         let answer = window.prompt(
             PromptLevel::Warning,
-            &format!("Delete {what} {where_}?"),
-            Some("Folders are deleted with everything inside. This cannot be undone."),
-            &["Delete", "Cancel"],
+            &message,
+            Some(tr("Folders are deleted with everything inside. This cannot be undone.")),
+            &[tr("Delete"), tr("Cancel")],
             cx,
         );
         cx.spawn(async move |this, cx| {
@@ -746,14 +754,23 @@ impl Workspace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn open_prompt_with(&mut self, kind: PromptKind, side: Side, target: Option<Entry>, initial: String, extra: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_prompt_with(
+        &mut self,
+        kind: PromptKind,
+        side: Side,
+        target: Option<Entry>,
+        initial: String,
+        extra: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let placeholder = match kind {
-            PromptKind::NewFolder => "Folder name",
-            PromptKind::NewFile => "File name",
-            PromptKind::Rename => "New name",
-            PromptKind::Chmod => "Octal mode, e.g. 755",
+            PromptKind::NewFolder => tr("Folder name"),
+            PromptKind::NewFile => tr("File name"),
+            PromptKind::Rename => tr("New name"),
+            PromptKind::Chmod => tr("Octal mode, e.g. 755"),
             PromptKind::QuickConnect => "sftp://user:password@host:22/path",
-            PromptKind::RenameFolder => "Folder name",
+            PromptKind::RenameFolder => tr("Folder name"),
         };
         let input = cx.new(|cx| {
             let i = TextInput::new(cx, placeholder).with_text(initial.clone());
@@ -833,7 +850,7 @@ impl Workspace {
                             (PromptKind::NewFile, _) => core.write_text(&session, &join_remote(&dir, &value), b"", &o).await.map(|_| ()),
                             (PromptKind::Rename, Some(e)) => core.rename(&session, &e.path, &join_remote(&dir, &value), &o).await,
                             (PromptKind::Chmod, Some(e)) => {
-                                let mode = u32::from_str_radix(&value, 8).map_err(|_| anyhow!("mode must be octal, e.g. 755"))?;
+                                let mode = u32::from_str_radix(&value, 8).map_err(|_| anyhow!("{}", tr("mode must be octal, e.g. 755")))?;
                                 core.chmod(&session, &e.path, mode, &o).await
                             }
                             _ => Ok(()),
@@ -930,7 +947,12 @@ impl Workspace {
     }
 
     fn act_dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.take().is_none() && self.rail_menu.take().is_none() && self.path_edit.take().is_none() && self.modal.take().is_none() && self.view == View::Settings {
+        if self.menu.take().is_none()
+            && self.rail_menu.take().is_none()
+            && self.path_edit.take().is_none()
+            && self.modal.take().is_none()
+            && self.view == View::Settings
+        {
             self.view = View::Main;
         }
         cx.notify();
@@ -945,7 +967,9 @@ impl Workspace {
     /// Turn a pane's breadcrumb bar into a text field with the current path.
     pub fn start_path_edit(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.pane(side).map(|p| p.path.clone()) else { return };
-        let input = cx.new(|cx| TextInput::new(cx, if side == Side::Local { "Folder on this computer" } else { "/remote/path" }).mono().with_text(path));
+        let input = cx.new(|cx| {
+            TextInput::new(cx, if side == Side::Local { tr("Folder on this computer") } else { "/remote/path" }).mono().with_text(path)
+        });
         input.update(cx, |i, cx| i.select_all_text(cx));
         let sub = cx.subscribe_in(&input, window, move |this, input, ev: &InputEvent, _, cx| match ev {
             InputEvent::Submit => {
@@ -984,7 +1008,7 @@ impl Workspace {
                         self.local.anchor = Some(name);
                     }
                 } else {
-                    self.toast(format!("Folder not found: {path}"), true);
+                    self.toast(trf("Folder not found: {path}", &[("path", &path)]), true);
                 }
             }
             Side::Remote => {
@@ -1002,7 +1026,7 @@ impl Workspace {
                 let t2 = target.clone();
                 self.run(cx, async move { core.is_dir(&session, &t2).await }, move |this, r, cx| match r {
                     Ok(true) => this.navigate(Side::Remote, target, cx),
-                    Ok(false) => this.toast(format!("{target} is not a folder"), true),
+                    Ok(false) => this.toast(trf("{path} is not a folder", &[("path", &target)]), true),
                     Err(e) => this.toast(format!("{target}: {e:#}"), true),
                 });
             }
@@ -1011,7 +1035,12 @@ impl Workspace {
     }
 
     pub fn browse_local_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let rx = cx.prompt_for_paths(gpui::PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open folder".into()) });
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Open folder").into()),
+        });
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(paths))) = rx.await
                 && let Some(p) = paths.first()
@@ -1032,27 +1061,27 @@ impl Workspace {
         let mut items: Vec<(&'static str, &'static str, u8)> = vec![];
         if let Some(e) = &entry {
             if e.is_dir {
-                items.push(("Open", "folder", 0));
+                items.push((tr("Open"), "folder", 0));
             }
             if connected {
                 items.push(match side {
-                    Side::Local => ("Upload", "arrow-right", 1),
-                    Side::Remote => ("Download", "arrow-left", 1),
+                    Side::Local => (tr("Upload"), "arrow-right", 1),
+                    Side::Remote => (tr("Download"), "arrow-left", 1),
                 });
             }
-            items.push(("Rename", "pencil", 2));
+            items.push((tr("Rename"), "pencil", 2));
             if side == Side::Remote {
-                items.push(("Permissions…", "key-round", 3));
+                items.push((tr("Permissions…"), "key-round", 3));
             }
-            items.push(("Copy path", "copy", 4));
+            items.push((tr("Copy path"), "copy", 4));
             if side == Side::Local {
-                items.push(("Show in file manager", "folder", 8));
+                items.push((tr("Show in file manager"), "folder", 8));
             }
-            items.push(("Delete", "trash-2", 5));
+            items.push((tr("Delete"), "trash-2", 5));
         }
-        items.push(("New folder", "folder-plus", 6));
-        items.push(("New file", "file-plus", 9));
-        items.push(("Refresh", "rotate-cw", 7));
+        items.push((tr("New folder"), "folder-plus", 6));
+        items.push((tr("New file"), "file-plus", 9));
+        items.push((tr("Refresh"), "rotate-cw", 7));
 
         let pos = menu.pos;
         Some(
@@ -1119,7 +1148,7 @@ impl Workspace {
             4 => {
                 if let Some(e) = entry {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(e.path));
-                    self.toast("Path copied", false);
+                    self.toast(tr("Path copied"), false);
                 }
             }
             5 => {
@@ -1141,14 +1170,8 @@ impl Workspace {
 
     fn render_toasts(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        div()
-            .absolute()
-            .bottom(px(16.))
-            .right(px(16.))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .children(self.toasts.iter().enumerate().map(|(i, toast)| {
+        div().absolute().bottom(px(16.)).right(px(16.)).flex().flex_col().gap(px(8.)).children(self.toasts.iter().enumerate().map(
+            |(i, toast)| {
                 div()
                     .id(("toast", i))
                     .flex()
@@ -1172,7 +1195,8 @@ impl Workspace {
                         }
                         cx.notify();
                     }))
-            }))
+            },
+        ))
     }
 }
 
@@ -1225,7 +1249,15 @@ pub struct Tip(pub SharedString);
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
-        div().px(px(8.)).py(px(4.)).rounded(px(5.)).bg(t.ink).text_color(t.bg).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(self.0.clone())
+        div()
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(5.))
+            .bg(t.ink)
+            .text_color(t.bg)
+            .text_size(px(12.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(self.0.clone())
     }
 }
 

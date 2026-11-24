@@ -14,8 +14,7 @@ pub const TITLEBAR_HEIGHT: f32 = 34.;
 
 pub fn app_icon() -> Arc<Image> {
     static ICON: OnceLock<Arc<Image>> = OnceLock::new();
-    ICON.get_or_init(|| Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../assets/app-icon.png").to_vec())))
-        .clone()
+    ICON.get_or_init(|| Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../assets/app-icon.png").to_vec()))).clone()
 }
 
 impl Workspace {
@@ -59,7 +58,8 @@ impl Workspace {
                             .child(div().text_color(if active { t.muted } else { t.faint }).child(s.site.name.clone()))
                     }),
             )
-            .child(div().flex_1().h_full());
+            .child(div().flex_1().h_full())
+            .children(self.render_update_pill(cx));
 
         #[cfg(target_os = "macos")]
         {
@@ -85,7 +85,14 @@ enum Glyph {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn caption_button(id: &'static str, area: WindowControlArea, glyph: Glyph, t: &super::theme::Theme, fg: gpui::Hsla, cx: &mut Context<Workspace>) -> impl IntoElement + use<> {
+fn caption_button(
+    id: &'static str,
+    area: WindowControlArea,
+    glyph: Glyph,
+    t: &super::theme::Theme,
+    fg: gpui::Hsla,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement + use<> {
     let is_close = matches!(glyph, Glyph::Close);
     let hover_bg = if is_close { rgb(0xC42B1C).into() } else { t.hover };
     let _ = cx;

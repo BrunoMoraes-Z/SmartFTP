@@ -1324,6 +1324,7 @@ impl Workspace {
                     .items_start()
                     .gap(px(8.))
                     .max_w(px(420.))
+                    .overflow_hidden()
                     .px(px(12.))
                     .py(px(9.))
                     .rounded(px(7.))
@@ -1334,7 +1335,8 @@ impl Workspace {
                     .text_size(px(12.))
                     .text_color(t.ink)
                     .child(icon(if toast.error { "circle-alert" } else { "info" }, 14., if toast.error { t.err } else { t.muted }))
-                    .child(div().flex_1().child(toast.text.clone()))
+                    // min_w_0 lets the text wrap inside the toast instead of widening it
+                    .child(div().flex_1().min_w_0().overflow_hidden().child(toast.text.clone()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if i < this.toasts.len() {
                             this.toasts.remove(i);

@@ -15,8 +15,14 @@ static KNOWN: LazyLock<Mutex<HashMap<String, Option<String>>>> = LazyLock::new(D
 
 fn service() -> String {
     // a separate SMARTFTP_HOME (tests, portable setups) gets its own entries
+    // (normalized, so "C:/x" and "C:\x\" name the same profile)
     match std::env::var_os("SMARTFTP_HOME") {
-        Some(home) => format!("SmartFTP ({})", home.to_string_lossy()),
+        Some(home) => {
+            let path = std::path::PathBuf::from(home);
+            let path = std::fs::canonicalize(&path).unwrap_or(path);
+            let text = path.to_string_lossy().replace('/', "\\");
+            format!("SmartFTP ({})", text.trim_start_matches(r"\\?\").trim_end_matches('\\'))
+        }
         None => "SmartFTP".into(),
     }
 }

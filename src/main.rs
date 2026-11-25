@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod core;
+mod dragdrop;
 mod i18n;
 mod mcp;
 mod platform;

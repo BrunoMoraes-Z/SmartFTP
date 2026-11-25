@@ -511,7 +511,7 @@ impl Workspace {
                             })
                             .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
                                 cx.stop_propagation();
-                                let p = paths.paths().iter().map(|p| p.to_string_lossy().to_string()).collect();
+                                let p = crate::dragdrop::dropped_paths(paths.paths());
                                 this.transfer(Side::Local, p, Some(target.clone()), cx);
                             }))
                         })
@@ -613,7 +613,7 @@ impl Workspace {
             }))
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
                 if side == Side::Remote {
-                    let p = paths.paths().iter().map(|p| p.to_string_lossy().to_string()).collect();
+                    let p = crate::dragdrop::dropped_paths(paths.paths());
                     this.transfer(Side::Local, p, None, cx);
                 }
             }))

@@ -62,6 +62,7 @@ pub fn run(core: Arc<Core>) {
         window
             .update(cx, |view, window, cx| {
                 window.focus(&gpui::Focusable::focus_handle(view, cx));
+                crate::dragdrop::install(window);
                 cx.activate(true);
             })
             .ok();

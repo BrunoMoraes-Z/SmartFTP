@@ -6440,6 +6440,7 @@ dependencies = [
  "keyring",
  "parking_lot",
  "rand 0.9.5",
+ "raw-window-handle",
  "rmcp",
  "russh",
  "russh-sftp",
@@ -6459,6 +6460,8 @@ dependencies = [
  "ureq",
  "uuid",
  "webpki-roots",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

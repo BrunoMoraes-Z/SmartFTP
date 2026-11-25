@@ -16,7 +16,7 @@ A desktop FTP / FTPS / SFTP client written in Rust with [GPUI](https://www.gpui.
 ## Highlights
 
 - **FTP, FTPS and SFTP** with password or private-key login, and host keys pinned on first use.
-- **Two panes, local and remote.** Send files with the → / ← button on a row, a double-click, or drag and drop, including straight from Explorer.
+- **Two panes, local and remote.** Send files with the → / ← button on a row, a double-click, or drag and drop, including straight from Explorer and from archives open in WinRAR, 7-Zip or an Explorer zip folder.
 - **Transfer queue like FileZilla's.** Add files to the queue and start them all, or one by one, when you are ready.
 - **View / Edit.** Open a remote file in VS Code or any editor; when you save, SmartFTP offers to upload it and replace the original.
 - **AI agents over MCP.** 18 tools to connect, browse, upload, download, read and write files. What an agent does shows up live in the window.

@@ -451,6 +451,7 @@ impl Render for SiteEditor {
                             .flex()
                             .flex_col()
                             .flex_1()
+                            .min_w_0()
                             .gap(px(2.))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Allow AI agents (MCP)")))
                             .child(
@@ -481,6 +482,7 @@ impl Render for SiteEditor {
                             .flex()
                             .flex_col()
                             .flex_1()
+                            .min_w_0()
                             .gap(px(2.))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("Upload edited files automatically")))
                             .child(div().text_size(px(12.)).text_color(t.faint).child(tr(

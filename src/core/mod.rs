@@ -2,6 +2,7 @@ pub mod config;
 pub mod ftp;
 pub mod model;
 pub mod remote;
+pub mod secrets;
 pub mod sftp;
 
 use std::collections::{HashMap, VecDeque};

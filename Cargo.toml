@@ -34,6 +34,16 @@ semver = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "json", "gzip"] }
 sha2 = "0.10"
 
+# Saved passwords live in the OS credential store, never in config.json.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
+
 [profile.dev]
 opt-level = 1
 

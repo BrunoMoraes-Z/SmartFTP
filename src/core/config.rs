@@ -282,16 +282,37 @@ impl Config {
         };
         let mut cfg = cfg;
         cfg.sync_rail();
-        // persist generated defaults such as the MCP token
+        for site in &mut cfg.sites {
+            // a password still in the file (older versions) is moved to the store by save()
+            if site.password.is_none() {
+                match super::secrets::load(&site.id) {
+                    Ok(pw) => site.password = pw,
+                    Err(e) => tracing::error!("reading the saved password of {}: {e:#}", site.name),
+                }
+            }
+        }
+        // persist generated defaults such as the MCP token, and migrate passwords
         let _ = cfg.save();
         cfg
     }
 
+    /// Write config.json. Passwords go to the OS credential store instead; only if that
+    /// store is unavailable is a password kept in the file, so it isn't lost.
     pub fn save(&self) -> anyhow::Result<()> {
         let path = config_path();
         std::fs::create_dir_all(path.parent().unwrap())?;
+        let mut disk = self.clone();
+        for site in &mut disk.sites {
+            match super::secrets::store(&site.id, site.password.as_deref()) {
+                Ok(()) => site.password = None,
+                Err(e) => {
+                    tracing::error!("the OS credential store is unavailable, keeping the password of {} in config.json: {e:#}", site.name)
+                }
+            }
+        }
+        super::secrets::forget_except(&self.sites.iter().map(|s| s.id.as_str()).collect::<Vec<_>>());
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&disk)?)?;
         std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
         Ok(())
     }

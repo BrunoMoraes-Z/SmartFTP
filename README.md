@@ -245,9 +245,18 @@ docs/          tour animation, recorder and rendered media
 
 The UI and the MCP server share one `Core`, held in an `Arc` on a Tokio runtime. The UI picks up changes by polling a version counter.
 
+## Where passwords are kept
+
+Saved passwords are kept in the operating system's credential store, never in `config.json`:
+
+- **Windows**: Credential Manager (Generic credentials named `<site id>.SmartFTP`), encrypted with DPAPI under your Windows login.
+- **macOS**: Keychain.
+- **Linux**: Secret Service (GNOME Keyring, KWallet).
+
+When you upgrade from 0.4.x or older, passwords already in `config.json` are moved to the store the first time the app starts, and removed from the file. Deleting a site also deletes its password. If the store can't be reached (for example, a Linux session with no Secret Service), the password stays in `config.json` so it isn't lost, and an error is logged. Passwords are never returned through MCP.
+
 ## Known limitations
 
-- Passwords are stored in plain text in `config.json` in your user profile. Moving them to the OS keychain is still to do.
 - There is no implicit FTPS (port 990) and no transfer resume.
 - When a server's host key changes, the connection is refused. To accept the new key, remove its entry from `known_hosts.json`; there is no prompt for this yet.
 - On FTP servers without `MLSD`, `LIST` timestamps are only accurate to the minute or the day. The compare badges allow for this.

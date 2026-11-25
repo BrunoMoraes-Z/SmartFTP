@@ -45,7 +45,8 @@ pub struct Site {
     pub host: String,
     pub port: u16,
     pub user: String,
-    /// Stored locally in the config file. Never returned through MCP.
+    /// Kept in the OS credential store, not in config.json (see `secrets`). Never returned
+    /// through MCP.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
     /// Private key file for SFTP. When set, key auth is tried first.

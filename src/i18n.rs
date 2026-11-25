@@ -138,6 +138,8 @@ static INDEX: LazyLock<HashMap<&'static str, (&'static str, &'static str)>> =
 /// (English key, Português (Brasil), Español)
 #[rustfmt::skip]
 static STRINGS: &[(&str, &str, &str)] = &[
+    ("Open {count} files for editing?", "Abrir {count} arquivos para edição?", "¿Abrir {count} archivos para editar?"),
+    ("Open all", "Abrir todos", "Abrir todos"),
     ("Shortcuts", "Atalhos", "Atajos"),
     ("Back (previous folder)", "Voltar (pasta anterior)", "Atrás (carpeta anterior)"),
     ("Forward (next folder)", "Avançar (próxima pasta)", "Adelante (carpeta siguiente)"),

@@ -8,7 +8,7 @@ gpui = "0.2.2"
 tokio = { version = "1", features = ["full"] }
 webpki-roots = "1"
 suppaftp = { version = "13", features = ["tokio-rustls-ring"] }
-russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
 russh-sftp = "4"
 rmcp = { version = "3.11", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 axum = "0.8"

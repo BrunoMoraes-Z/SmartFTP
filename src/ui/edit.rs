@@ -146,6 +146,35 @@ pub fn open_in_editor(command: &str, file: &Path, cx: &mut gpui::App) -> Result<
 impl Workspace {
     /// "View / Edit" on a file. Local files open directly; remote files are downloaded first
     /// and then watched for changes.
+    /// View / Edit several files (folders are skipped); asks first when there are many.
+    pub fn view_edit_many(&mut self, side: Side, entries: Vec<Entry>, cx: &mut Context<Self>) {
+        let files: Vec<Entry> = entries.into_iter().filter(|e| !e.is_dir).collect();
+        if files.len() <= 10 {
+            for e in files {
+                self.view_edit(side, e, cx);
+            }
+            return;
+        }
+        let answer = self.ask(
+            super::ask::AskLevel::Info,
+            trf("Open {count} files for editing?", &[("count", &files.len().to_string())]),
+            None::<String>,
+            &[tr("Open all"), tr("Cancel")],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await.ok() == Some(0) {
+                this.update(cx, |this, cx| {
+                    for e in files {
+                        this.view_edit(side, e, cx);
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     pub fn view_edit(&mut self, side: Side, entry: Entry, cx: &mut Context<Self>) {
         if entry.is_dir {
             return;

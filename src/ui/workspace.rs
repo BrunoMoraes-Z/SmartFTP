@@ -194,6 +194,9 @@ pub struct Workspace {
     pub drawer_tab: DrawerTab,
     pub connecting: HashSet<String>,
     pub toasts: Vec<Toast>,
+    /// The selection before the last plain click, so a double-click on one of several
+    /// selected rows acts on all of them (the first click had narrowed the selection).
+    last_click: Option<(Side, String, HashSet<String>)>,
     pub modal: Option<Modal>,
     pub menu: Option<ContextMenu>,
     pub view: View,
@@ -246,6 +249,7 @@ impl Workspace {
             drawer_tab: DrawerTab::Active,
             connecting: HashSet::new(),
             toasts: vec![],
+            last_click: None,
             modal: None,
             menu: None,
             view: View::Main,
@@ -626,11 +630,22 @@ impl Workspace {
             Side::Remote => &self.remote_focus,
         });
         let m = ev.modifiers();
+        let before = self.last_click.take();
         if ev.click_count() >= 2 {
+            if let Some((s, n, previous)) = before
+                && s == side
+                && n == name
+                && previous.contains(&name)
+                && let Some(pane) = self.pane_mut(side)
+            {
+                pane.selected = previous;
+            }
             self.open_entry(side, &name, cx);
             return;
         }
+        let plain = !m.shift && !m.secondary();
         let Some(pane) = self.pane_mut(side) else { return };
+        let previous = pane.selected.clone();
         if m.shift
             && let Some(anchor) = pane.anchor.clone()
         {
@@ -643,10 +658,13 @@ impl Workspace {
             if !pane.selected.remove(&name) {
                 pane.selected.insert(name.clone());
             }
-            pane.anchor = Some(name);
+            pane.anchor = Some(name.clone());
         } else {
             pane.selected = HashSet::from([name.clone()]);
-            pane.anchor = Some(name);
+            pane.anchor = Some(name.clone());
+        }
+        if plain && previous.len() > 1 {
+            self.last_click = Some((side, name, previous));
         }
         cx.notify();
     }
@@ -659,8 +677,10 @@ impl Workspace {
         } else if self.core.config.lock().interface.double_click_transfers {
             self.transfer(side, vec![e.path], None, cx);
         } else {
-            // "Open for editing": same as View / Edit (remote files are watched and uploaded on save)
-            self.view_edit(side, e, cx);
+            // "Open for editing": same as View / Edit (remote files are watched and uploaded on save),
+            // for every selected file when the double-clicked one is part of the selection
+            let files = self.targets(side, Some(name));
+            self.view_edit_many(side, files, cx);
         }
     }
 
@@ -1084,11 +1104,8 @@ impl Workspace {
 
     fn act_edit_file(&mut self, _: &EditFile, _: &mut Window, cx: &mut Context<Self>) {
         let side = self.last_side;
-        if let [one] = self.targets(side, None).as_slice()
-            && !one.is_dir
-        {
-            self.view_edit(side, one.clone(), cx);
-        }
+        let files = self.targets(side, None);
+        self.view_edit_many(side, files, cx);
     }
 
     fn act_edit_path(&mut self, _: &EditPath, window: &mut Window, cx: &mut Context<Self>) {
@@ -1300,9 +1317,8 @@ impl Workspace {
                 self.enqueue(side, paths, cx);
             }
             11 => {
-                if let Some(e) = entry {
-                    self.view_edit(side, e, cx);
-                }
+                let files = self.targets(side, name.as_deref());
+                self.view_edit_many(side, files, cx);
             }
             8 => {
                 if let Some(e) = entry {

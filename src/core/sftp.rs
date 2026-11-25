@@ -62,6 +62,31 @@ impl client::Handler for Client {
     }
 }
 
+/// Algorithms offered to the server: russh's modern defaults first, then the older ones
+/// FileZilla also accepts, so servers that only speak those still connect. The server picks
+/// the first one both sides support, so modern servers are unaffected.
+fn compatible_algorithms() -> russh::Preferred {
+    use russh::{cipher, kex, mac};
+    let d = russh::Preferred::DEFAULT;
+    let mut kexes: Vec<kex::Name> =
+        d.kex.iter().copied().filter(|k| !k.as_ref().starts_with("ext-info") && !k.as_ref().starts_with("kex-strict")).collect();
+    kexes.extend([
+        kex::ECDH_SHA2_NISTP256,
+        kex::ECDH_SHA2_NISTP384,
+        kex::ECDH_SHA2_NISTP521,
+        kex::DH_G14_SHA1,
+        kex::DH_GEX_SHA1,
+        kex::DH_G1_SHA1,
+    ]);
+    // extension markers go last, as in russh's own list
+    kexes.extend(d.kex.iter().copied().filter(|k| k.as_ref().starts_with("ext-info") || k.as_ref().starts_with("kex-strict")));
+    let mut ciphers: Vec<cipher::Name> = d.cipher.to_vec();
+    ciphers.extend([cipher::AES_128_GCM, cipher::AES_256_CBC, cipher::AES_192_CBC, cipher::AES_128_CBC, cipher::TRIPLE_DES_CBC]);
+    let mut macs: Vec<mac::Name> = d.mac.to_vec();
+    macs.extend([mac::HMAC_SHA1_ETM, mac::HMAC_SHA1]);
+    russh::Preferred { kex: kexes.into(), cipher: ciphers.into(), mac: macs.into(), ..d }
+}
+
 pub struct SftpFs {
     handle: Handle<Client>,
     sftp: SftpSession,
@@ -70,6 +95,11 @@ pub struct SftpFs {
 impl SftpFs {
     pub async fn connect(site: &Site, settings: &ConnectionSettings) -> Result<Self> {
         let config = Arc::new(client::Config {
+            preferred: compatible_algorithms(),
+            // russh asks for >= 3072-bit groups by default; many servers (Java-based ones,
+            // appliances) only have 2048-bit groups and the handshake then fails with
+            // "Key exchange init failed". 2048 is what OpenSSH and PuTTY/FileZilla accept.
+            gex: client::GexParams::new(2048, 4096, 8192).expect("valid DH group sizes"),
             inactivity_timeout: None,
             keepalive_interval: (settings.keepalive_secs > 0).then(|| Duration::from_secs(settings.keepalive_secs)),
             keepalive_max: 4,

@@ -2,6 +2,7 @@ pub mod ask;
 pub mod assets;
 pub mod components;
 pub mod dialogs;
+pub mod drag_out;
 pub mod edit;
 pub mod input;
 pub mod panes;

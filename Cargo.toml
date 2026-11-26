@@ -37,8 +37,8 @@ sha2 = "0.10"
 # Saved passwords live in the OS credential store, never in config.json.
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
-# drop target fix for files dragged from archive managers and virtual files (see dragdrop.rs)
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# drop target fix for files dragged from archive managers and virtual files, and rows dragged out to Explorer (see dragdrop.rs)
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 windows-core = "0.61"
 raw-window-handle = "0.6"
 

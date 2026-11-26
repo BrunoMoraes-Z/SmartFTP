@@ -82,11 +82,12 @@ Headless mode with no window: `smartftp --mcp-stdio`. It uses the same saved sit
 
 ### Files and transfers
 
-- **Moving files** (files dragged in from Explorer can be dropped on the remote pane or on one of its folders):
+- **Moving files** (files dragged in from Explorer can be dropped on the remote pane to upload them, or on the local pane to move them into its folder, holding Ctrl to copy; both also accept a drop on one of their folders):
   - the → / ← button on a row;
   - a double-click on a file;
   - the **Upload to… / Download to…** button for the current selection;
   - dragging between the panes, or onto a specific folder.
+  - dragging rows out of the window into an Explorer folder or onto the desktop (Windows): local files are **moved** there, like Ctrl+X then Ctrl+V (hold Ctrl to copy instead); remote files are **downloaded** into that folder through the transfer queue.
 - **Path bar**: click a breadcrumb to jump to it. Click the empty part of the bar, or press `Ctrl+L`, to type a path. Remote paths can be relative and `..` works. The local pane also has a folder picker.
 - **Compare badges** (`▲ newer`, `older`, `only here`) show how the two sides differ. Timestamps are kept on upload and download, so the badges stay meaningful.
 - **Transfers**: progress, speed, cancel and retry. The **Activity** tab shows who did what, you or an agent.

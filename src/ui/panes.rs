@@ -503,18 +503,16 @@ impl Workspace {
                             cx.stop_propagation();
                             this.drop_into(side, d.clone(), target.clone(), cx);
                         }))
-                        // files from Explorer dropped on a remote folder go into that folder
-                        .when(side == Side::Remote, |row| {
-                            let target = target2.clone();
-                            row.drag_over::<ExternalPaths>(move |s, _, _, _| {
-                                s.bg(drop_color.opacity(0.14)).border_color(drop_color.opacity(0.7))
-                            })
-                            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
-                                cx.stop_propagation();
-                                let p = crate::dragdrop::dropped_paths(paths.paths());
-                                this.transfer(Side::Local, p, Some(target.clone()), cx);
-                            }))
-                        })
+                        // files from Explorer dropped on a folder go into that folder
+                        .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(drop_color.opacity(0.14)).border_color(drop_color.opacity(0.7)))
+                        .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                            cx.stop_propagation();
+                            let p = crate::dragdrop::dropped_paths(paths.paths());
+                            match side {
+                                Side::Remote => this.transfer(Side::Local, p, Some(target2.clone()), cx),
+                                Side::Local => this.drop_local(p, Some(target2.clone()), window.modifiers().control, cx),
+                            }
+                        }))
                 }
                 None => row,
             };
@@ -605,16 +603,17 @@ impl Workspace {
                 }),
             )
             .drag_over::<DraggedFiles>(move |s, d, _, _| if d.side != side { s.bg(accent_soft) } else { s })
-            .drag_over::<ExternalPaths>(move |s, _, _, _| if side == Side::Remote { s.bg(accent_soft) } else { s })
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(accent_soft))
             .on_drop(cx.listener(move |this, d: &DraggedFiles, _, cx| {
                 if d.side != side {
                     this.transfer(d.side, d.paths.clone(), None, cx);
                 }
             }))
-            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
-                if side == Side::Remote {
-                    let p = crate::dragdrop::dropped_paths(paths.paths());
-                    this.transfer(Side::Local, p, None, cx);
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                let p = crate::dragdrop::dropped_paths(paths.paths());
+                match side {
+                    Side::Remote => this.transfer(Side::Local, p, None, cx),
+                    Side::Local => this.drop_local(p, None, window.modifiers().control, cx),
                 }
             }))
             .child(path_bar)

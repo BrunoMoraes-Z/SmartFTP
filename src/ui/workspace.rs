@@ -210,6 +210,8 @@ pub struct Workspace {
     pub ask_focus: FocusHandle,
     /// SmartFTP runs as administrator: Explorer cannot drop files on it (Windows UIPI).
     pub elevated_notice: bool,
+    /// Rows are being dragged outside the window (Windows owns the drag until it ends).
+    pub dragging_out: bool,
     last_version: u64,
     seen_jobs: HashSet<u64>,
     last_log: Option<chrono::DateTime<chrono::Local>>,
@@ -262,6 +264,7 @@ impl Workspace {
             asks: Default::default(),
             ask_focus: cx.focus_handle(),
             elevated_notice: crate::platform::is_elevated(),
+            dragging_out: false,
             last_version: 0,
             seen_jobs: HashSet::new(),
             last_log: None,
@@ -1484,6 +1487,7 @@ impl Render for Workspace {
             .text_color(t.ink)
             .font_family(super::UI_FONT)
             .text_size(px(13.))
+            .on_drag_move(cx.listener(Self::drag_move))
             .child(titlebar)
             .children(notice)
             .child(

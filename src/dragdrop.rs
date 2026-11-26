@@ -46,6 +46,68 @@ pub fn clean_old_drops() {
     }
 }
 
+/// Move (or copy) dropped files into the folder `dest`. On Windows the shell does it, so the
+/// user gets its progress, conflict prompts and undo. Blocking: call off the UI thread.
+/// Returns false when the user cancelled part of it.
+#[cfg(windows)]
+pub fn move_into(paths: &[PathBuf], dest: &Path, copy: bool) -> anyhow::Result<bool> {
+    use windows::Win32::UI::Shell::{FO_COPY, FO_MOVE, FOF_ALLOWUNDO, SHFILEOPSTRUCTW, SHFileOperationW};
+    use windows::core::PCWSTR;
+
+    // double-NUL terminated lists of NUL terminated paths
+    let list = |paths: &[&Path]| -> Vec<u16> {
+        let mut out = vec![];
+        for p in paths {
+            out.extend(p.as_os_str().to_string_lossy().encode_utf16());
+            out.push(0);
+        }
+        out.push(0);
+        out
+    };
+    let from = list(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>());
+    let to = list(&[dest]);
+    let mut op = SHFILEOPSTRUCTW {
+        wFunc: if copy { FO_COPY } else { FO_MOVE },
+        pFrom: PCWSTR(from.as_ptr()),
+        pTo: PCWSTR(to.as_ptr()),
+        fFlags: FOF_ALLOWUNDO.0 as u16,
+        ..Default::default()
+    };
+    // SAFETY: both lists outlive the call and are double-NUL terminated; the shell's copy
+    // engine wants COM on this thread.
+    let code = unsafe {
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let code = SHFileOperationW(&mut op);
+        if com {
+            CoUninitialize();
+        }
+        code
+    };
+    // 1223 = ERROR_CANCELLED, 0x4C7 the user aborted
+    if code != 0 && code != 1223 && code != 0x4C7 {
+        anyhow::bail!("the file operation failed (code {code:#x})");
+    }
+    Ok(code == 0 && !op.fAnyOperationsAborted.as_bool())
+}
+
+#[cfg(not(windows))]
+pub fn move_into(paths: &[PathBuf], dest: &Path, copy: bool) -> anyhow::Result<bool> {
+    for p in paths {
+        let Some(name) = p.file_name() else { continue };
+        let target = dest.join(name);
+        if copy {
+            if p.is_dir() {
+                anyhow::bail!("copying folders is not supported here");
+            }
+            std::fs::copy(p, &target)?;
+        } else {
+            std::fs::rename(p, &target)?;
+        }
+    }
+    Ok(true)
+}
+
 /// Keep a name from a drag source inside `base`: no drive, root or "..".
 fn safe_join(base: &Path, name: &str) -> Option<PathBuf> {
     let mut out = base.to_path_buf();
@@ -73,6 +135,15 @@ pub use win::install;
 pub fn install(_window: &gpui::Window) {}
 
 #[cfg(windows)]
+pub use out::{drag_out_local, drag_out_remote, window_handle};
+
+/// Dragging rows out of the window into Explorer is Windows only.
+#[cfg(not(windows))]
+pub fn window_handle(_window: &gpui::Window) -> Option<isize> {
+    None
+}
+
+#[cfg(windows)]
 mod win {
     use std::cell::RefCell;
     use std::mem::ManuallyDrop;
@@ -87,7 +158,7 @@ mod win {
     use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
     use windows::Win32::System::Memory::{GMEM_MOVEABLE, GMEM_ZEROINIT, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
     use windows::Win32::System::Ole::{
-        CF_HDROP, DROPEFFECT, IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
+        CF_HDROP, DROPEFFECT, DROPEFFECT_NONE, IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
     };
     use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
     use windows::Win32::UI::Shell::{DROPFILES, DragQueryFileW, FILEDESCRIPTORW, FILEGROUPDESCRIPTORW, HDROP};
@@ -117,7 +188,8 @@ mod win {
             if RevokeDragDrop(hwnd).is_err() {
                 return;
             }
-            let wrapper: IDropTarget = DropFix { inner: inner.clone(), virtual_data: RefCell::new(None) }.into();
+            let wrapper: IDropTarget =
+                DropFix { inner: inner.clone(), virtual_data: RefCell::new(None), refused: Default::default() }.into();
             if let Err(e) = RegisterDragDrop(hwnd, &wrapper) {
                 tracing::warn!("drop fix not installed: {e}");
                 let _ = RegisterDragDrop(hwnd, &inner);
@@ -125,7 +197,7 @@ mod win {
         }
     }
 
-    fn fmt(cf: u16, tymed: i32, lindex: i32) -> FORMATETC {
+    pub(super) fn fmt(cf: u16, tymed: i32, lindex: i32) -> FORMATETC {
         FORMATETC { cfFormat: cf, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0, lindex, tymed: tymed as u32 }
     }
 
@@ -137,7 +209,7 @@ mod win {
         unsafe { RegisterClipboardFormatW(w!("FileContents")) as u16 }
     }
 
-    fn has(obj: &IDataObject, cf: u16) -> bool {
+    pub(super) fn has(obj: &IDataObject, cf: u16) -> bool {
         unsafe { obj.QueryGetData(&fmt(cf, TYMED_HGLOBAL.0, -1)) == S_OK }
     }
 
@@ -283,6 +355,8 @@ mod win {
         inner: IDropTarget,
         /// For a virtual-file drag: the wrapper handed to GPUI (it reports placeholder paths).
         virtual_data: RefCell<Option<IDataObject>>,
+        /// Our own remote-files drag came back over the window: it only carries a marker file.
+        refused: std::cell::Cell<bool>,
     }
 
     impl DropFix {
@@ -307,20 +381,37 @@ mod win {
     impl IDropTarget_Impl for DropFix_Impl {
         fn DragEnter(&self, pdataobj: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
             let obj = pdataobj.ok()?;
+            let refused = has(obj, super::out::cf_remote_drag());
+            self.refused.set(refused);
+            if refused {
+                unsafe { *effect = DROPEFFECT_NONE };
+                return Ok(());
+            }
             let pass = self.for_gpui(obj);
             unsafe { self.inner.DragEnter(&pass, keys, *pt, effect) }
         }
 
         fn DragOver(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+            if self.refused.get() {
+                unsafe { *effect = DROPEFFECT_NONE };
+                return Ok(());
+            }
             unsafe { self.inner.DragOver(keys, *pt, effect) }
         }
 
         fn DragLeave(&self) -> Result<()> {
+            if self.refused.replace(false) {
+                return Ok(());
+            }
             self.virtual_data.borrow_mut().take();
             unsafe { self.inner.DragLeave() }
         }
 
         fn Drop(&self, pdataobj: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+            if self.refused.replace(false) {
+                unsafe { *effect = DROPEFFECT_NONE };
+                return Ok(());
+            }
             let obj = pdataobj.ok()?;
             // by now archive managers have extracted their files: read the paths again
             let real = if has(obj, CF_HDROP.0) {
@@ -401,6 +492,335 @@ mod win {
     }
 }
 
+/// Rows dragged out of the window and dropped in Explorer (or on the desktop).
+///
+/// Local rows are dragged as the real files with "move" preferred, like Ctrl+X then Ctrl+V;
+/// Explorer does the move itself. Remote rows have no local file yet, and Explorer never tells
+/// the source where a drop landed. So we drag a hidden, empty marker file, watch the shell's
+/// change notifications for the copy Explorer makes of it, and download into that folder.
+#[cfg(windows)]
+mod out {
+    use std::mem::ManuallyDrop;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use anyhow::{Context as _, anyhow};
+    use futures::channel::oneshot;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::Com::{IDataObject, STGMEDIUM, STGMEDIUM_0, TYMED_HGLOBAL};
+    use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
+    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Ole::{DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_NONE};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        ILCreateFromPathW, ILFindLastID, ILFree, SHCNE_CREATE, SHCNE_RENAMEITEM, SHCNE_UPDATEDIR, SHCNRF_NewDelivery, SHCNRF_ShellLevel,
+        SHChangeNotification_Lock, SHChangeNotification_Unlock, SHChangeNotifyDeregister, SHChangeNotifyEntry, SHChangeNotifyRegister,
+        SHCreateDataObject, SHDoDragDrop, SHGetPathFromIDListW,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_WNDPROC, GetMessageW, HWND_MESSAGE, MSG, PostMessageW,
+        PostQuitMessage, PostThreadMessageW, SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_LBUTTONUP, WM_QUIT,
+    };
+    use windows::core::{BOOL, HSTRING, w};
+
+    use super::drop_dir;
+    use super::win::fmt;
+
+    const WM_SHELL_CHANGE: u32 = WM_APP + 0x51;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+
+    /// The native handle of `window`, to start a drag from.
+    pub fn window_handle(window: &gpui::Window) -> Option<isize> {
+        let handle = HasWindowHandle::window_handle(window).ok()?;
+        match handle.as_raw() {
+            RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+            _ => None,
+        }
+    }
+
+    /// Marks our remote-files drag, so our own window refuses it.
+    pub fn cf_remote_drag() -> u16 {
+        unsafe { RegisterClipboardFormatW(w!("SmartFTP.RemoteDrag")) as u16 }
+    }
+
+    fn cf_preferred_effect() -> u16 {
+        unsafe { RegisterClipboardFormatW(w!("Preferred DropEffect")) as u16 }
+    }
+
+    /// Drag local files out of the window; returns once they are dropped (or the drag ends).
+    /// Explorer may still be moving them in the background.
+    pub fn drag_out_local(hwnd: isize, paths: &[PathBuf]) -> anyhow::Result<()> {
+        let hwnd = HWND(hwnd as *mut _);
+        let result = (|| {
+            let obj = shell_data(paths)?;
+            set_dword(&obj, cf_preferred_effect(), DROPEFFECT_MOVE.0)?;
+            unsafe { SHDoDragDrop(Some(hwnd), &obj, None, DROPEFFECT_COPY | DROPEFFECT_MOVE) }.context("drag and drop")
+        })();
+        release_mouse(hwnd);
+        result.map(|_| ())
+    }
+
+    /// A remote-files drag that was dropped somewhere: `dir` gets the folder it landed in.
+    pub struct RemoteDrop {
+        pub dir: oneshot::Receiver<PathBuf>,
+        watcher: u32,
+        source: PathBuf,
+    }
+
+    impl Drop for RemoteDrop {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = PostThreadMessageW(self.watcher, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+            let _ = std::fs::remove_dir_all(&self.source);
+        }
+    }
+
+    /// Drag remote files out of the window as a marker file. `None` when the drag was cancelled.
+    pub fn drag_out_remote(hwnd: isize) -> anyhow::Result<Option<RemoteDrop>> {
+        let hwnd = HWND(hwnd as *mut _);
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let source = drop_dir().join(format!("out-{id}"));
+        let name = format!("SmartFTP-{}.download", &id[..12]);
+        let marker = source.join(&name);
+        let made = std::fs::create_dir_all(&source)
+            .and_then(|_| std::fs::OpenOptions::new().write(true).create_new(true).attributes(FILE_ATTRIBUTE_HIDDEN).open(&marker));
+        let watched = made.map_err(anyhow::Error::from).and_then(|_| watch_for(name));
+        let (watcher, dir) = match watched {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&source);
+                release_mouse(hwnd);
+                return Err(e);
+            }
+        };
+        let pending = RemoteDrop { dir, watcher, source };
+        let result = (|| {
+            let obj = shell_data(std::slice::from_ref(&marker))?;
+            set_dword(&obj, cf_remote_drag(), 1)?;
+            unsafe { SHDoDragDrop(Some(hwnd), &obj, None, DROPEFFECT_COPY) }.context("drag and drop")
+        })();
+        release_mouse(hwnd);
+        Ok((result? != DROPEFFECT_NONE).then_some(pending))
+    }
+
+    /// OLE ate the button release: send GPUI one (off-window) so it forgets the pressed row.
+    fn release_mouse(hwnd: HWND) {
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_LBUTTONUP, WPARAM(0), LPARAM(0xFFFF_FFFF));
+        }
+    }
+
+    /// A shell data object for `paths` (all in one folder, as the local pane lists them).
+    fn shell_data(paths: &[PathBuf]) -> anyhow::Result<IDataObject> {
+        let parent = paths.first().and_then(|p| p.parent()).ok_or_else(|| anyhow!("nothing to drag"))?;
+        unsafe {
+            let folder = ILCreateFromPathW(&HSTRING::from(parent.as_os_str()));
+            if folder.is_null() {
+                anyhow::bail!("{} not found", parent.display());
+            }
+            let full: Vec<*mut ITEMIDLIST> = paths.iter().map(|p| ILCreateFromPathW(&HSTRING::from(p.as_os_str()))).collect();
+            let result = if full.iter().any(|p| p.is_null()) || paths.iter().any(|p| p.parent() != Some(parent)) {
+                Err(anyhow!("the dragged files were not found"))
+            } else {
+                let children: Vec<*const ITEMIDLIST> = full.iter().map(|p| ILFindLastID(*p) as *const _).collect();
+                SHCreateDataObject(Some(folder), Some(&children), None::<&IDataObject>).map_err(anyhow::Error::from)
+            };
+            for p in full {
+                ILFree(Some(p));
+            }
+            ILFree(Some(folder));
+            result
+        }
+    }
+
+    fn set_dword(obj: &IDataObject, cf: u16, value: u32) -> anyhow::Result<()> {
+        unsafe {
+            let h = GlobalAlloc(GMEM_MOVEABLE, 4)?;
+            *(GlobalLock(h) as *mut u32) = value;
+            let _ = GlobalUnlock(h);
+            let medium =
+                STGMEDIUM { tymed: TYMED_HGLOBAL.0 as u32, u: STGMEDIUM_0 { hGlobal: h }, pUnkForRelease: ManuallyDrop::new(None) };
+            obj.SetData(&fmt(cf, TYMED_HGLOBAL.0, -1), &medium, true)?;
+        }
+        Ok(())
+    }
+
+    /// Start a thread that watches the whole shell namespace for a file called `name` and
+    /// sends the folder it appears in. Returns the thread id (post WM_QUIT to stop it).
+    fn watch_for(name: String) -> anyhow::Result<(u32, oneshot::Receiver<PathBuf>)> {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (found_tx, found_rx) = oneshot::channel();
+        std::thread::Builder::new().name("drop-watch".into()).spawn(move || watch_thread(&name, ready_tx, found_tx))?;
+        let tid = ready_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| anyhow!("drop watcher did not start"))??;
+        Ok((tid, found_rx))
+    }
+
+    thread_local! {
+        /// The marker the watcher thread looks for, and the folder it was found in.
+        static WATCH: std::cell::RefCell<(String, Option<PathBuf>)> = const { std::cell::RefCell::new((String::new(), None)) };
+    }
+
+    /// The shell sends change notifications straight to the window procedure (not through the
+    /// message queue), so the watcher needs one of its own.
+    unsafe extern "system" fn watch_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        unsafe {
+            if msg != WM_SHELL_CHANGE {
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+            }
+            let changes = changed_paths(wparam, lparam);
+            WATCH.with(|w| {
+                let mut w = w.borrow_mut();
+                if w.1.is_none()
+                    && let Some(dir) = changes.into_iter().find_map(|(event, path)| landed_in(&w.0, event, path))
+                {
+                    w.1 = Some(dir);
+                    PostQuitMessage(0);
+                }
+            });
+            LRESULT(0)
+        }
+    }
+
+    fn watch_thread(name: &str, ready: std::sync::mpsc::Sender<anyhow::Result<u32>>, found: oneshot::Sender<PathBuf>) {
+        WATCH.with(|w| *w.borrow_mut() = (name.to_string(), None));
+        unsafe {
+            let hwnd = match CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!("SmartFTP drop watcher"),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            ) {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = ready.send(Err(e.into()));
+                    return;
+                }
+            };
+            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, watch_proc as *const () as isize);
+            // the empty ID list is the desktop, the root of the whole namespace
+            let root = [0u16; 2];
+            let entry = SHChangeNotifyEntry { pidl: root.as_ptr() as *mut ITEMIDLIST, fRecursive: BOOL(1) };
+            let reg = SHChangeNotifyRegister(
+                hwnd,
+                SHCNRF_ShellLevel | SHCNRF_NewDelivery,
+                (SHCNE_CREATE.0 | SHCNE_RENAMEITEM.0 | SHCNE_UPDATEDIR.0) as i32,
+                WM_SHELL_CHANGE,
+                1,
+                &entry,
+            );
+            if reg == 0 {
+                let _ = DestroyWindow(hwnd);
+                let _ = ready.send(Err(anyhow!("could not watch for the drop")));
+                return;
+            }
+            let _ = ready.send(Ok(GetCurrentThreadId()));
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                DispatchMessageW(&msg);
+            }
+            let _ = SHChangeNotifyDeregister(reg);
+            let _ = DestroyWindow(hwnd);
+        }
+        if let Some(dir) = WATCH.with(|w| w.borrow_mut().1.take()) {
+            // the marker was only there to find the folder
+            let copy = dir.join(name);
+            for _ in 0..30 {
+                if std::fs::remove_file(&copy).is_ok() || !copy.exists() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let _ = found.send(dir);
+        }
+    }
+
+    /// The folder a change shows the marker `name` was copied into (never our own temp folder).
+    fn landed_in(name: &str, event: u32, path: PathBuf) -> Option<PathBuf> {
+        let dir = if event & SHCNE_UPDATEDIR.0 != 0 {
+            path.join(name).is_file().then_some(path)?
+        } else {
+            if path.file_name().is_none_or(|n| n != name) {
+                return None;
+            }
+            path.parent()?.to_path_buf()
+        };
+        (!dir.starts_with(drop_dir()) && dir.is_dir()).then_some(dir)
+    }
+
+    /// The (event, path) pairs of one shell change notification.
+    unsafe fn changed_paths(wparam: WPARAM, lparam: LPARAM) -> Vec<(u32, PathBuf)> {
+        let mut out = vec![];
+        unsafe {
+            let mut pidls: *mut *mut ITEMIDLIST = std::ptr::null_mut();
+            let mut event = 0i32;
+            let lock = SHChangeNotification_Lock(HANDLE(wparam.0 as *mut _), lparam.0 as u32, Some(&mut pidls), Some(&mut event));
+            if lock.is_invalid() || pidls.is_null() {
+                return out;
+            }
+            for i in 0..2 {
+                let pidl = *pidls.add(i);
+                if pidl.is_null() {
+                    continue;
+                }
+                let mut buf = [0u16; 260];
+                if SHGetPathFromIDListW(pidl, &mut buf).as_bool() {
+                    let len = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+                    out.push((event as u32, PathBuf::from(String::from_utf16_lossy(&buf[..len]))));
+                }
+            }
+            let _ = SHChangeNotification_Unlock(lock);
+        }
+        out
+    }
+
+    /// Copies a marker the way Explorer does and checks that the watcher finds the folder.
+    /// Ignored: it drives the real shell (run with `cargo test -- --ignored`).
+    #[test]
+    #[ignore]
+    fn watcher_finds_where_the_shell_copied_the_marker() {
+        let name = format!("SmartFTP-test-{}.download", uuid::Uuid::new_v4().simple());
+        let src_dir = std::env::temp_dir().join(format!("smartftp-src-{}", uuid::Uuid::new_v4().simple()));
+        let dst_dir = std::env::temp_dir().join(format!("smartftp-dst-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        std::fs::write(src_dir.join(&name), b"").unwrap();
+        let (tid, mut rx) = watch_for(name.clone()).unwrap();
+        let script = format!(
+            "(New-Object -ComObject Shell.Application).Namespace('{}').CopyHere('{}', 16); Start-Sleep -Seconds 2",
+            dst_dir.display(),
+            src_dir.join(&name).display()
+        );
+        std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script]).status().unwrap();
+        let mut got = None;
+        for _ in 0..100 {
+            if let Ok(Some(dir)) = rx.try_recv() {
+                got = Some(dir);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        unsafe {
+            let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+        }
+        assert_eq!(got.as_deref().map(|p| p.canonicalize().unwrap()), Some(dst_dir.canonicalize().unwrap()));
+        assert!(!dst_dir.join(&name).exists(), "the marker copy is removed");
+        let _ = std::fs::remove_dir_all(&src_dir);
+        let _ = std::fs::remove_dir_all(&dst_dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +833,23 @@ mod tests {
         assert_eq!(safe_join(base, "C:\\Windows\\x"), None);
         assert_eq!(safe_join(base, "\\\\"), None);
         assert_eq!(safe_join(base, "we?ird*.txt"), Some(base.join("we_ird_.txt")));
+    }
+
+    /// Drives the real shell copy engine (run with `cargo test -- --ignored`).
+    #[test]
+    #[ignore]
+    fn move_into_moves_and_copies() {
+        let root = std::env::temp_dir().join(format!("smartftp-mv-{}", uuid::Uuid::new_v4().simple()));
+        let (src, dst) = (root.join("src"), root.join("dst"));
+        std::fs::create_dir_all(src.join("folder")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        std::fs::write(src.join("folder").join("b.txt"), b"b").unwrap();
+        assert!(move_into(&[src.join("a.txt"), src.join("folder")], &dst, false).unwrap());
+        assert!(dst.join("a.txt").is_file() && dst.join("folder").join("b.txt").is_file());
+        assert!(!src.join("a.txt").exists() && !src.join("folder").exists());
+        assert!(move_into(&[dst.join("a.txt")], &src, true).unwrap());
+        assert!(src.join("a.txt").is_file() && dst.join("a.txt").is_file());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
